@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>schematicBlock – Tests</title>
+    <link rel="stylesheet" href="schematicBlock.css">
+    <script src="schematicBlock.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 2rem; background: #f4f4f4; }
+        h1   { font-size: 1.2rem; margin-bottom: 0.5rem; }
+        .sub { font-size: 0.8rem; color: #666; margin-bottom: 1.5rem; }
+        h2   { font-size: 1rem; margin: 1.5rem 0 0.5rem; }
+        .test-result { display: flex; align-items: center; gap: 0.6rem;
+            padding: 0.3rem 0; border-bottom: 1px solid #ddd; font-size: 0.9rem; }
+        .test-result:last-child { border-bottom: none; }
+        .badge { font-size: 0.75rem; font-weight: bold; padding: 2px 8px;
+            border-radius: 20px; min-width: 50px; text-align: center; }
+        .pass  { background: #d4edda; color: #155724; }
+        .fail  { background: #f8d7da; color: #721c24; }
+        .summary { margin-top: 0.75rem; font-weight: bold; font-size: 0.95rem; }
+        .demo-schematic {
+            position: relative; width: 760px; height: 320px;
+            background: #fff; border: 1px solid #ccc; border-radius: 4px;
+            margin-bottom: 0.5rem;
+        }
+        .sb-crosshair {
+            position: absolute; pointer-events: none;
+            transform: translate(-50%, -50%);
+        }
+        .sb-crosshair::before, .sb-crosshair::after {
+            content: ''; position: absolute; background: rgba(220,50,50,0.7);
+        }
+        .sb-crosshair::before { width: 1px; height: 16px; left: 0; top: -8px; }
+        .sb-crosshair::after  { width: 16px; height: 1px; left: -8px; top: 0; }
+        .sb-crosshair-label {
+            position: absolute; font-size: 9px; color: rgba(200,0,0,0.85);
+            font-family: monospace; left: 6px; top: -14px; white-space: nowrap;
+        }
+        /* Sichtbare Textpanes */
+        .sb-text1 { background: rgba(255,210,80,0.18); border: 1px dashed #c8a030;
+            min-width: 8px; min-height: 8px; font-size: 0.72rem; line-height: 1.3; }
+        .sb-text2 { background: rgba(80,160,255,0.15); border: 1px dashed #1a6fcc;
+            min-width: 8px; min-height: 8px; font-size: 0.72rem; line-height: 1.3; color:#1a6fcc; }
+        .legend { font-size: 0.72rem; color: #666; margin-bottom: 8px; }
+        #event-log { font-size: 0.78rem; font-family: monospace; background: #fff;
+            border: 1px solid #ddd; border-radius: 4px; padding: 0.5rem;
+            min-height: 36px; max-height: 80px; overflow-y: auto; margin-top: 0.5rem; }
+    </style>
+</head>
+<body>
+<h1>schematicBlock — Tests</h1>
+<p class="sub">Jede Test-Klasse leitet eigenständig ab: eigenes SVG, eigene Größe, eigene Connectoren</p>
+<div id="results"></div>
+
+<h2>Demo 1 — lr-Layout, verschiedene Größen</h2>
+<p class="legend">Gelb gestrichelt = sb-text1 (links) &nbsp;|&nbsp; Blau gestrichelt = sb-text2 (rechts) &nbsp;|&nbsp; Rotes Kreuz = (x,y) Anker</p>
+<div class="demo-schematic" id="s1"></div>
+
+<h2>Demo 2 — tb-Layout (oben/unten) + Rotation</h2>
+<p class="legend">Gelb = sb-text1 (oben bei tb) &nbsp;|&nbsp; Blau = sb-text2 (unten bei tb)</p>
+<div class="demo-schematic" id="s2"></div>
+
+<div id="event-log">— noch keine Events —</div>
+
+<script>
+// ── Testrahmen ───────────────────────────────────────────────────────────────
+const results = [];
+function assert(desc, fn) {
+    try { fn(); results.push({ ok: true, desc }); }
+    catch(e) { results.push({ ok: false, desc, err: e.message }); }
+}
+function assertEqual(a, b) { if (a !== b) throw new Error(`Erwartet "${b}", erhalten "${a}"`); }
+function assertNotNull(v)  { if (v == null) throw new Error('Wert ist null/undefined'); }
+function assertThrows(fn)  {
+    let t = false; try { fn(); } catch(e) { t = true; }
+    if (!t) throw new Error('Erwartet: Exception nicht geworfen');
+}
+
+// ── SVG-Helfer ───────────────────────────────────────────────────────────────
+function makeSvg(w, h, color = '#555', label = '') {
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">
+          <rect x="2" y="2" width="${w-4}" height="${h-4}" rx="3"
+                fill="none" stroke="${color}" stroke-width="2"/>
+          ${label ? `<text x="${w/2}" y="${h/2+4}" text-anchor="middle"
+                fill="${color}" font-size="10" font-family="monospace">${label}</text>` : ''}
+        </svg>`
+    );
+}
+
+// ── Unabhängige Test-Klassen — jede mit eigenem SVG, Größe, Connectoren ──────
+
+// Klasse A: kleines Rechteck, 2 Connectoren links/rechts, lr-Layout
+class BlockA extends schematicBlock {
+    constructor(opts = {}) {
+        super({ imageW: 80, imageH: 32, textLayout: 'lr',
+                imageSrc: makeSvg(80, 32, '#1a6fcc', 'A'), ...opts });
+        this.connectors = [
+            { name: 'left',  x: '0%',   y: '50%', type: 'electrical', direction: 'left',  minLength: 20 },
+            { name: 'right', x: '100%', y: '50%', type: 'electrical', direction: 'right', minLength: 20 },
+        ];
+    }
+}
+
+// Klasse B: hohes Rechteck, 2 Connectoren oben/unten, tb-Layout
+class BlockB extends schematicBlock {
+    constructor(opts = {}) {
+        super({ imageW: 40, imageH: 80, textLayout: 'tb',
+                imageSrc: makeSvg(40, 80, '#4a9a4a', 'B'), ...opts });
+        this.connectors = [
+            { name: 'top',    x: '50%', y: '0%',   type: 'electrical', direction: 'up'   },
+            { name: 'bottom', x: '50%', y: '100%', type: 'electrical', direction: 'down' },
+        ];
+    }
+}
+
+// Klasse C: breites Rechteck, 1 Signal-Connector, lr-Layout
+class BlockC extends schematicBlock {
+    constructor(opts = {}) {
+        super({ imageW: 120, imageH: 24, textLayout: 'lr',
+                imageSrc: makeSvg(120, 24, '#c8a030', 'C'), ...opts });
+        this.connectors = [
+            { name: 'ctrl', x: '50%', y: '0%', type: 'signal', direction: 'up', minLength: 16 },
+        ];
+    }
+}
+
+// Klasse D: quadratisch, 4 Connectoren, lr-Layout
+class BlockD extends schematicBlock {
+    constructor(opts = {}) {
+        super({ imageW: 60, imageH: 60, textLayout: 'lr',
+                imageSrc: makeSvg(60, 60, '#8b2fc9', 'D'), ...opts });
+        this.connectors = [
+            { name: 'n', x: '50%', y: '0%',   type: 'electrical', direction: 'up'    },
+            { name: 's', x: '50%', y: '100%', type: 'electrical', direction: 'down'  },
+            { name: 'w', x: '0%',  y: '50%',  type: 'electrical', direction: 'left'  },
+            { name: 'e', x: '100%',y: '50%',  type: 'electrical', direction: 'right' },
+        ];
+    }
+}
+
+// Klasse E: wie B aber kein Connector (für delete/rotate Tests)
+class BlockE extends schematicBlock {
+    constructor(opts = {}) {
+        super({ imageW: 50, imageH: 50, textLayout: 'lr',
+                imageSrc: makeSvg(50, 50, '#c05050', 'E'), ...opts });
+        this.connectors = [];
+    }
+}
+
+// ── Tests: Instanziierung ────────────────────────────────────────────────────
+assert('schematicBlock kann nicht direkt instanziiert werden', () =>
+    assertThrows(() => new schematicBlock())
+);
+assert('BlockA kann instanziiert werden', () => assertNotNull(new BlockA()));
+assert('BlockB kann instanziiert werden', () => assertNotNull(new BlockB()));
+assert('BlockC kann instanziiert werden', () => assertNotNull(new BlockC()));
+assert('BlockD kann instanziiert werden', () => assertNotNull(new BlockD()));
+assert('render() wirft ohne imageSrc', () => {
+    class NoSrc extends schematicBlock { constructor() { super(); this.connectors=[]; } }
+    assertThrows(() => new NoSrc().render(document.createElement('div')));
+});
+assert('getConnectorPositions() wirft vor render()', () =>
+    assertThrows(() => new BlockA().getConnectorPositions(document.createElement('div'), 'a'))
+);
+assert('getImageDiv() wirft vor render()', () =>
+    assertThrows(() => new BlockA().getImageDiv())
+);
+
+// ── Tests: DOM-Struktur nach render() ───────────────────────────────────────
+assert('BlockA render(): sb-image im Container', () => {
+    const c = document.createElement('div'); new BlockA().render(c);
+    assertNotNull(c.querySelector('.sb-image'));
+});
+assert('BlockA render(): sb-text1 im Container', () => {
+    const c = document.createElement('div'); new BlockA().render(c);
+    assertNotNull(c.querySelector('.sb-text1'));
+});
+assert('BlockA render(): sb-text2 im Container', () => {
+    const c = document.createElement('div'); new BlockA().render(c);
+    assertNotNull(c.querySelector('.sb-text2'));
+});
+assert('BlockB render(): sb-image im Container', () => {
+    const c = document.createElement('div'); new BlockB().render(c);
+    assertNotNull(c.querySelector('.sb-image'));
+});
+assert('render() idempotent: nur ein sb-image (BlockA)', () => {
+    const c = document.createElement('div'); const b = new BlockA(); b.render(c); b.render(c);
+    assertEqual(c.querySelectorAll('.sb-image').length, 1);
+});
+assert('render() idempotent: nur ein sb-text1 (BlockA)', () => {
+    const c = document.createElement('div'); const b = new BlockA(); b.render(c); b.render(c);
+    assertEqual(c.querySelectorAll('.sb-text1').length, 1);
+});
+
+// ── Tests: setImage / Größen ─────────────────────────────────────────────────
+assert('BlockA: sb-image.width = 80px', () => {
+    const c = document.createElement('div'); new BlockA().render(c);
+    assertEqual(c.querySelector('.sb-image').style.width, '80px');
+});
+assert('BlockA: sb-image.height = 32px', () => {
+    const c = document.createElement('div'); new BlockA().render(c);
+    assertEqual(c.querySelector('.sb-image').style.height, '32px');
+});
+assert('BlockB: sb-image.width = 40px', () => {
+    const c = document.createElement('div'); new BlockB().render(c);
+    assertEqual(c.querySelector('.sb-image').style.width, '40px');
+});
+assert('BlockB: sb-image.height = 80px', () => {
+    const c = document.createElement('div'); new BlockB().render(c);
+    assertEqual(c.querySelector('.sb-image').style.height, '80px');
+});
+assert('BlockC: sb-image.width = 120px', () => {
+    const c = document.createElement('div'); new BlockC().render(c);
+    assertEqual(c.querySelector('.sb-image').style.width, '120px');
+});
+
+// ── Tests: Connectoren ───────────────────────────────────────────────────────
+assert('BlockA: 2 Connectoren in sb-image', () => {
+    const c = document.createElement('div'); new BlockA().render(c);
+    assertEqual(c.querySelectorAll('.sb-image .sb-connector').length, 2);
+});
+assert('BlockB: 2 Connectoren in sb-image', () => {
+    const c = document.createElement('div'); new BlockB().render(c);
+    assertEqual(c.querySelectorAll('.sb-image .sb-connector').length, 2);
+});
+assert('BlockC: 1 Connector in sb-image', () => {
+    const c = document.createElement('div'); new BlockC().render(c);
+    assertEqual(c.querySelectorAll('.sb-image .sb-connector').length, 1);
+});
+assert('BlockD: 4 Connectoren in sb-image', () => {
+    const c = document.createElement('div'); new BlockD().render(c);
+    assertEqual(c.querySelectorAll('.sb-image .sb-connector').length, 4);
+});
+assert('BlockE: 0 Connectoren', () => {
+    const c = document.createElement('div'); new BlockE().render(c);
+    assertEqual(c.querySelectorAll('.sb-connector').length, 0);
+});
+assert('BlockA: electrical-Dots korrekt', () => {
+    const c = document.createElement('div'); new BlockA().render(c);
+    assertEqual(c.querySelectorAll('.sb-connector--electrical').length, 2);
+});
+assert('BlockC: signal-Dot korrekt', () => {
+    const c = document.createElement('div'); new BlockC().render(c);
+    assertEqual(c.querySelectorAll('.sb-connector--signal').length, 1);
+});
+assert('BlockD: getElectricalConnectors() = 4', () =>
+    assertEqual(new BlockD().getElectricalConnectors().length, 4)
+);
+assert('Connectoren nicht dupliziert bei doppeltem render()', () => {
+    const c = document.createElement('div'); const b = new BlockA(); b.render(c); b.render(c);
+    assertEqual(c.querySelectorAll('.sb-connector').length, 2);
+});
+assert('Connectoren liegen in sb-image (nicht außerhalb)', () => {
+    const c = document.createElement('div'); new BlockA().render(c);
+    assertEqual(c.querySelectorAll('.sb-image .sb-connector').length, 2);
+    assertEqual(c.querySelectorAll('.sb-text1 .sb-connector').length, 0);
+});
+
+// ── Tests: Textpanes ─────────────────────────────────────────────────────────
+assert('sb-text1 nimmt Text auf (BlockA)', () => {
+    const c = document.createElement('div'); const b = new BlockA(); b.render(c);
+    b._text1Div.textContent = 'Hallo';
+    assertEqual(c.querySelector('.sb-text1').textContent, 'Hallo');
+});
+assert('sb-text2 nimmt Text auf (BlockA)', () => {
+    const c = document.createElement('div'); const b = new BlockA(); b.render(c);
+    b._text2Div.textContent = 'Welt';
+    assertEqual(c.querySelector('.sb-text2').textContent, 'Welt');
+});
+assert('sb-text1 nimmt HTML auf (BlockB)', () => {
+    const c = document.createElement('div'); const b = new BlockB(); b.render(c);
+    const span = document.createElement('span'); span.textContent = 'X';
+    b._text1Div.appendChild(span);
+    assertNotNull(c.querySelector('.sb-text1 span'));
+});
+assert('sb-text2 bleibt nach erneutem render() erhalten (BlockA)', () => {
+    const c = document.createElement('div'); const b = new BlockA(); b.render(c);
+    b._text2Div.textContent = 'Persistent'; b.render(c);
+    assertEqual(c.querySelector('.sb-text2').textContent, 'Persistent');
+});
+assert('sb-text1 bleibt nach erneutem render() erhalten (BlockD)', () => {
+    const c = document.createElement('div'); const b = new BlockD(); b.render(c);
+    b._text1Div.textContent = 'Bleibt'; b.render(c);
+    assertEqual(c.querySelector('.sb-text1').textContent, 'Bleibt');
+});
+
+// ── Tests: Positionierung ────────────────────────────────────────────────────
+assert('BlockA positioniert: sb-image hat position:absolute', () => {
+    const c = document.createElement('div');
+    new BlockA({ x:100, y:80 }).render(c);
+    assertEqual(c.querySelector('.sb-image').style.position, 'absolute');
+});
+assert('BlockA positioniert: sb-image.left = x', () => {
+    const c = document.createElement('div');
+    new BlockA({ x:150, y:80 }).render(c);
+    assertEqual(c.querySelector('.sb-image').style.left, '150px');
+});
+assert('BlockA positioniert: sb-image.top = y', () => {
+    const c = document.createElement('div');
+    new BlockA({ x:150, y:90 }).render(c);
+    assertEqual(c.querySelector('.sb-image').style.top, '90px');
+});
+assert('BlockA positioniert: translate(-50%,-50%) gesetzt', () => {
+    const c = document.createElement('div');
+    new BlockA({ x:100, y:80 }).render(c);
+    assertEqual(c.querySelector('.sb-image').style.transform.includes('translate(-50%, -50%)'), true);
+});
+assert('BlockA nicht-positioniert: kein position:absolute', () => {
+    const c = document.createElement('div');
+    new BlockA().render(c);
+    assertEqual(c.querySelector('.sb-image').style.position, '');
+});
+assert('BlockB positioniert: sb-text1 hat position:absolute', () => {
+    const c = document.createElement('div');
+    new BlockB({ x:100, y:80 }).render(c);
+    assertEqual(c.querySelector('.sb-text1').style.position, 'absolute');
+});
+
+// ── Tests: textLayout ────────────────────────────────────────────────────────
+assert('BlockA: _textLayout = lr', () => assertEqual(new BlockA()._textLayout, 'lr'));
+assert('BlockB: _textLayout = tb', () => assertEqual(new BlockB()._textLayout, 'tb'));
+assert('BlockC: _textLayout = lr', () => assertEqual(new BlockC()._textLayout, 'lr'));
+
+// ── Tests: Rotation ──────────────────────────────────────────────────────────
+assert('BlockE rotate(): rotation = 90', () => {
+    const c = document.createElement('div'); const b = new BlockE({ x:50,y:50 }); b.render(c);
+    b.rotate(); assertEqual(b.rotation, 90);
+});
+assert('BlockE rotate(): transform enthält rotate(90deg)', () => {
+    const c = document.createElement('div'); const b = new BlockE({ x:50,y:50 }); b.render(c);
+    b.rotate();
+    assertEqual(c.querySelector('.sb-image').style.transform.includes('rotate(90deg)'), true);
+});
+assert('BlockE rotate(): translate(-50%,-50%) bleibt erhalten', () => {
+    const c = document.createElement('div'); const b = new BlockE({ x:50,y:50 }); b.render(c);
+    b.rotate();
+    assertEqual(c.querySelector('.sb-image').style.transform.includes('translate(-50%, -50%)'), true);
+});
+assert('BlockE rotate(): left/top ändern sich nicht', () => {
+    const c = document.createElement('div'); const b = new BlockE({ x:100,y:80 }); b.render(c);
+    b.rotate();
+    assertEqual(c.querySelector('.sb-image').style.left, '100px');
+    assertEqual(c.querySelector('.sb-image').style.top,  '80px');
+});
+assert('BlockA rotate() 4x = 0°', () => {
+    const c = document.createElement('div'); const b = new BlockA({ x:50,y:50 }); b.render(c);
+    b.rotate(); b.rotate(); b.rotate(); b.rotate(); assertEqual(b.rotation, 0);
+});
+assert('BlockA rotate() feuert sb-rotate Event', () => {
+    const c = document.createElement('div'); const b = new BlockA({ x:50,y:50 }); b.render(c);
+    let deg = null; c.addEventListener('sb-rotate', e => deg = e.detail.rotation);
+    b.rotate(); assertEqual(deg, 90);
+});
+assert('BlockD: Connectoren bleiben in sb-image nach Rotation', () => {
+    const c = document.createElement('div'); const b = new BlockD({ x:50,y:50 }); b.render(c);
+    b.rotate();
+    assertEqual(c.querySelectorAll('.sb-image .sb-connector').length, 4);
+});
+
+// ── Tests: select / delete ───────────────────────────────────────────────────
+assert('BlockA select(): sb-image--selected gesetzt', () => {
+    const c = document.createElement('div'); const b = new BlockA(); b.render(c); b.select();
+    assertNotNull(c.querySelector('.sb-image--selected'));
+});
+assert('BlockA deselect(): sb-image--selected entfernt', () => {
+    const c = document.createElement('div'); const b = new BlockA(); b.render(c); b.select(); b.deselect();
+    assertEqual(c.querySelectorAll('.sb-image--selected').length, 0);
+});
+assert('BlockB select() feuert sb-select Event', () => {
+    const c = document.createElement('div'); const b = new BlockB(); b.render(c);
+    let fired = false; c.addEventListener('sb-select', () => fired = true);
+    b.select(); assertEqual(fired, true);
+});
+assert('BlockC delete(): sb-image entfernt', () => {
+    const c = document.createElement('div'); const b = new BlockC(); b.render(c); b.delete();
+    assertEqual(c.querySelectorAll('.sb-image').length, 0);
+});
+assert('BlockC delete(): sb-text1 entfernt', () => {
+    const c = document.createElement('div'); const b = new BlockC(); b.render(c); b.delete();
+    assertEqual(c.querySelectorAll('.sb-text1').length, 0);
+});
+assert('BlockC delete(): sb-text2 entfernt', () => {
+    const c = document.createElement('div'); const b = new BlockC(); b.render(c); b.delete();
+    assertEqual(c.querySelectorAll('.sb-text2').length, 0);
+});
+assert('BlockD delete() feuert sb-delete Event', () => {
+    const c = document.createElement('div'); const b = new BlockD(); b.render(c);
+    let fired = false; c.addEventListener('sb-delete', () => fired = true);
+    b.delete(); assertEqual(fired, true);
+});
+
+// ── Ergebnisse rendern ───────────────────────────────────────────────────────
+const rDiv = document.getElementById('results');
+results.forEach(r => {
+    const row = document.createElement('div'); row.className = 'test-result';
+    const b = document.createElement('span'); b.className = `badge ${r.ok?'pass':'fail'}`; b.textContent = r.ok?'PASS':'FAIL';
+    const t = document.createElement('span'); t.textContent = r.desc + (r.err ? ' — '+r.err : '');
+    row.appendChild(b); row.appendChild(t); rDiv.appendChild(row);
+});
+const passed = results.filter(r=>r.ok).length;
+const sum = document.createElement('div'); sum.className = 'summary';
+sum.style.color = passed===results.length ? '#155724' : '#721c24';
+sum.textContent = `${passed} / ${results.length} Tests bestanden`;
+rDiv.appendChild(sum);
+
+// ── Demo-Hilfsfunktionen ─────────────────────────────────────────────────────
+function drawCrosshair(el, x, y, label='') {
+    const ch = document.createElement('div'); ch.className = 'sb-crosshair';
+    ch.style.left = x+'px'; ch.style.top = y+'px';
+    const lbl = document.createElement('span'); lbl.className = 'sb-crosshair-label';
+    lbl.textContent = label || `(${x},${y})`; ch.appendChild(lbl); el.appendChild(ch);
+}
+const log = document.getElementById('event-log');
+function logEv(msg) {
+    if (log.textContent.includes('noch keine')) log.textContent = '';
+    const d = document.createElement('div'); d.textContent = msg; log.insertBefore(d, log.firstChild);
+}
+document.body.addEventListener('sb-select', e => logEv(`sb-select: ${e.detail.block.constructor.name}`));
+document.body.addEventListener('sb-rotate', e => logEv(`sb-rotate: ${e.detail.block.constructor.name} → ${e.detail.rotation}°`));
+document.body.addEventListener('sb-delete', e => logEv(`sb-delete: ${e.detail.block.constructor.name}`));
+
+// ── Demo 1: lr-Layout, verschiedene Klassen nebeneinander ───────────────────
+const s1 = document.getElementById('s1');
+const d1 = [
+    { cls: BlockA, x:100, y:80  },
+    { cls: BlockB, x:260, y:100 },
+    { cls: BlockC, x:420, y:80  },
+    { cls: BlockD, x:610, y:110 },
+];
+d1.forEach(({cls, x, y}) => {
+    drawCrosshair(s1, x, y, `(${x},${y})`);
+    const b = new cls({ x, y }); b.render(s1);
+    b._text1Div.innerHTML = `<div style="font-weight:bold">${cls.name}</div><div>text1</div>`;
+    b._text2Div.innerHTML = `<div>text2</div>`;
+});
+// Zweite Reihe: BlockA mit viel Text
+const d1b = [
+    { x:100, y:240, t1: '<div style="font-weight:bold">BlockA</div><div>lang</div><div>lang</div><div>lang</div>', t2: '<div>rechts</div>' },
+    { x:400, y:240, t1: '<div style="font-weight:bold">BlockA</div>', t2: '<div>viel</div><div>text</div><div>rechts</div><div>hier</div>' },
+    { x:620, y:240, t1: '<div style="font-weight:bold">BlockA</div><div>mitte</div>', t2: '<div>mitte</div>' },
+];
+d1b.forEach(({x,y,t1,t2}) => {
+    drawCrosshair(s1, x, y, `(${x},${y})`);
+    const b = new BlockA({ x, y }); b.render(s1);
+    b._text1Div.innerHTML = t1; b._text2Div.innerHTML = t2;
+});
+requestAnimationFrame(() => [...s1.querySelectorAll('.sb-text1,.sb-text2')]
+    .forEach(el => el.closest('.demo-schematic') === s1 && null));
+setTimeout(() => document.querySelectorAll('.sb-image').forEach(img => {
+    const block = [...[...document.querySelectorAll('*')]]
+        .find(el => el._imageDiv === img);
+    if (block) block._repositionText?.();
+}), 50);
+
+// ── Demo 2: tb-Layout + Rotation ────────────────────────────────────────────
+const s2 = document.getElementById('s2');
+// tb-Blöcke (BlockB)
+[[120,130],[300,130],[480,130],[660,130]].forEach(([x,y],i) => {
+    drawCrosshair(s2, x, y, `(${x},${y})`);
+    const b = new BlockB({ x, y }); b.render(s2);
+    b._text1Div.innerHTML = `<div style="font-weight:bold">oben ${i+1}</div><div>text1</div>`;
+    b._text2Div.innerHTML = `<div>unten ${i+1}</div>`;
+    if (i > 0) { for(let r=0;r<i;r++) b.rotate(); }
+});
+// Zweite Reihe: BlockD mit Rotation und tb
+const rotAngles = [0,90,180,270];
+[[120,260],[300,260],[480,260],[660,260]].forEach(([x,y],i) => {
+    drawCrosshair(s2, x, y, `(${x},${y})`);
+    const b = new BlockD({ x, y }); b.render(s2);
+    b._text1Div.innerHTML = `<div style="font-weight:bold">${rotAngles[i]}°</div>`;
+    b._text2Div.innerHTML = `<div>D</div>`;
+    for(let r=0;r<i;r++) b.rotate();
+});
+
+// ── Anker-Tests nach Layout-Pass ─────────────────────────────────────────────
+requestAnimationFrame(() => requestAnimationFrame(() => {
+    const allBlocks = [];
+    [s1,s2].forEach(s => {
+        s.querySelectorAll('.sb-image').forEach(img => {
+            if (!img.style.left) return;
+            const x = parseFloat(img.style.left);
+            const y = parseFloat(img.style.top);
+            const sr = s.getBoundingClientRect();
+            const ir = img.getBoundingClientRect();
+            const cx = Math.round(ir.left - sr.left + ir.width  / 2);
+            const cy = Math.round(ir.top  - sr.top  + ir.height / 2);
+            allBlocks.push({ ok: cx===Math.round(x) && cy===Math.round(y),
+                desc: `Anker (${Math.round(x)},${Math.round(y)}): Bildmitte ist (${cx},${cy})` });
+        });
+    });
+
+    const aDiv = document.createElement('div'); aDiv.style.marginTop='1rem';
+    const ah = document.createElement('h2'); ah.textContent='Anker-Tests (nach Layout-Pass)';
+    aDiv.appendChild(ah);
+    allBlocks.forEach(r => {
+        const row = document.createElement('div'); row.className='test-result';
+        const b = document.createElement('span'); b.className=`badge ${r.ok?'pass':'fail'}`; b.textContent=r.ok?'PASS':'FAIL';
+        const t = document.createElement('span'); t.textContent=r.desc;
+        row.appendChild(b); row.appendChild(t); aDiv.appendChild(row);
+    });
+    const ap = allBlocks.filter(r=>r.ok).length;
+    const as = document.createElement('div'); as.className='summary';
+    as.style.color = ap===allBlocks.length ? '#155724' : '#721c24';
+    as.textContent = `${ap} / ${allBlocks.length} Anker-Tests bestanden`;
+    aDiv.appendChild(as);
+    document.body.appendChild(aDiv);
+}));
+</script>
+</body>
+</html>
