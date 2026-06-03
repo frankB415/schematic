@@ -29,11 +29,12 @@ class schematicBlock {
      * @param {number} [opts.imageW] — Bildbreite in px
      * @param {number} [opts.imageH] — Bildhöhe in px
      */
-    constructor({ x = null, y = null, imageW = null, imageH = null, textLayout = 'lr', imageSrc = null } = {}) {
+    constructor({ x = null, y = null, imageW = null, imageH = null, textLayout = 'lr', imageSrc = null, mirrored = false } = {}) {
         if (this.constructor === schematicBlock) {
             throw new Error("'schematicBlock' kann nicht direkt instanziiert werden.");
         }
         this.rotation    = 0;
+        this._mirrored   = mirrored;
         this._x          = x;
         this._y          = y;
         this._imageW     = imageW;
@@ -91,18 +92,24 @@ class schematicBlock {
     getConnectorPositions(containerEl, blockId, gridSize = 10) {
         if (!this._imageDiv)
             throw new Error(`${this.constructor.name}.getConnectorPositions(): render() zuerst aufrufen.`);
-        const cr   = containerEl.getBoundingClientRect();
-        const snap = v => Math.round(v / gridSize) * gridSize;
+        const cr    = containerEl.getBoundingClientRect();
+        const snap  = v => Math.round(v / gridSize) * gridSize;
+        const extra = this._mirrored ? (this._imageW ?? 64) + 10 : 0;
         return this.getConnectors().map(conn => {
             const dot = this._imageDiv.querySelector(`.sb-connector[data-name="${conn.name}"]`);
             if (!dot) throw new Error(`${this.constructor.name}: Connector '${conn.name}' nicht im DOM.`);
-            const r = dot.getBoundingClientRect();
+            const r   = dot.getBoundingClientRect();
+            // direction aus DOM lesen — spiegelt den aktuellen Zustand (auch bei mirrored)
+            const dir = dot.dataset.direction || conn.direction || 'right';
+            const isH = dir === 'left' || dir === 'right';
             return {
                 id:        `${blockId}.${conn.name}`,
                 x:         snap(r.left - cr.left + r.width  / 2),
                 y:         snap(r.top  - cr.top  + r.height / 2),
-                direction: conn.direction || 'right',
-                minLength: conn.minLength ?? 20,
+                direction: dir,
+                minLength: isH && this._mirrored
+                    ? Math.max(conn.minLength ?? 20, extra)
+                    : (conn.minLength ?? 20),
             };
         });
     }
@@ -183,7 +190,6 @@ class schematicBlock {
                 e.preventDefault();
                 this._showContextMenu(e.clientX, e.clientY);
             });
-            document.addEventListener('click', () => this._closeContextMenu(), { capture: true });
             schematicEl.appendChild(div);
             this._imageDiv = div;
         }
@@ -248,16 +254,22 @@ class schematicBlock {
     renderConnectors() {
         if (!this._imageDiv) return;
         this._imageDiv.querySelectorAll('.sb-connector').forEach(el => el.remove());
+
+        const mirrorX   = { '0%': '100%', '100%': '0%' };
+        const mirrorDir = { 'left': 'right', 'right': 'left' };
+
         (this.connectors || []).forEach(conn => {
             const type = conn.type === 'signal' ? 'signal' : 'electrical';
+            const x    = this._mirrored ? (mirrorX[conn.x]     ?? conn.x)         : conn.x;
+            const dir  = this._mirrored ? (mirrorDir[conn.direction] ?? conn.direction) : conn.direction;
             const dot  = document.createElement('div');
             dot.className         = `sb-connector sb-connector--${type}`;
             dot.dataset.name      = conn.name;
             dot.dataset.type      = type;
-            dot.dataset.direction = conn.direction || '';
-            dot.style.left        = conn.x;
+            dot.dataset.direction = dir || '';
+            dot.style.left        = x;
             dot.style.top         = conn.y;
-            dot.title = `${conn.name} (${type}${conn.direction ? ', '+conn.direction : ''})`;
+            dot.title = `${conn.name} (${type}${dir ? ', '+dir : ''})`;
             this._imageDiv.appendChild(dot);
         });
     }
@@ -330,10 +342,16 @@ class schematicBlock {
         menu.style.left = `${x}px`;
         menu.style.top  = `${y}px`;
         document.body.appendChild(menu);
+        this._menuEl = menu;
     }
 
     _closeContextMenu() {
         document.querySelectorAll('[data-sb-menu]').forEach(el => el.remove());
+        this._menuEl = null;
+        if (this._menuCloseHandler) {
+            document.removeEventListener('mousedown', this._menuCloseHandler);
+            this._menuCloseHandler = null;
+        }
     }
 
     _showSrc() {
