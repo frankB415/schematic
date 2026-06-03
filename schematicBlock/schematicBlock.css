@@ -39,6 +39,7 @@ DOM-Struktur:
     justify-content: flex-start;
     cursor: pointer;
     white-space: nowrap;
+    text-align: right;
 }
 
 .sb-text--selected {
