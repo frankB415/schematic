@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Lastfluss Demo3 — DCDC</title>
+<link rel="stylesheet" href="/schematic/schematicBlock/schematicBlock.css">
+  <link rel="stylesheet" href="/schematic/demo.css">
+</head>
+<body>
+
+<h1>Lastfluss Demo3 — DCDC</h1>
+<p class="subtitle">
+  Knoten1: Solar1 + DCDC.in &nbsp;|&nbsp;
+  Knoten2: Solar2 + Last + DCDC.out &nbsp;|&nbsp;
+  Solar1 → DCDC → Last (links), Solar2 (rechts)
+</p>
+
+<div id="schematic"></div>
+<div id="log"></div>
+
+<script src="/schematic/schematicBlock/schematicBlock.js"></script>
+<script src="/schematic/labeledBlock/labeledBlock.js"></script>
+<script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
+<script src="/schematic/simulator/baseSim.js"></script>
+<script src="/schematic/simulator/lastflussSim.js"></script>
+<script src="/schematic/lastflussBlock/solarPanel.js"></script>
+<script src="/schematic/lastflussBlock/last.js"></script>
+<script src="/schematic/lastflussBlock/dcdc.js"></script>
+
+<script type="module">
+
+const logEl = document.getElementById('log');
+function log(msg, cls = '') {
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = msg;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── Instanzen ────────────────────────────────────────────────────────────────
+//
+//   Knoten1 (hohe Seite):   Solar1 + DCDC.in   U1 ~ 40V
+//   Knoten2 (niedrige Seite): Solar2 + Last + DCDC.out   U2 = U1/1.5 ~ 26V
+//
+//   Layout:
+//
+//   [Solar1]        [DCDC]        [Solar2]
+//      |              |in             |
+//      |              |               |
+//      └──── k1 ──────┘       k2 ────┘
+//                             |out
+//                           [Last]
+//
+// Blockgröße 60×80 px — x/y = Bildmittelpunkt im Schematic
+const solar1 = new SolarPanel('Solar1', { pNom: 300, voc: 48,  x:  90, y:  70 });
+const dcdc   = new DCDC('DCDC1',  { vNomIn: 43.2, vNomOut: 28.8, eta: 0.95, pNom: 400, couplingImpedance: 6, x:  90, y: 210 });
+const last1  = new Last('Last1',  { pNom: 400, uMin: 20, uMax: 36, x:  90, y: 350 });
+const solar2 = new SolarPanel('Solar2', { pNom: 300, voc: 36,  x: 530, y:  70 });
+
+// ── Layout ───────────────────────────────────────────────────────────────────
+const schematic = document.getElementById('schematic');
+
+solar1.render(schematic);
+dcdc.render(schematic);
+last1.render(schematic);
+solar2.render(schematic);
+
+// ── Routing ──────────────────────────────────────────────────────────────────
+requestAnimationFrame(() => {
+
+  const connectors = [
+    ...solar1.getConnectorPositions(schematic, 'solar1'),
+    ...dcdc.getConnectorPositions(schematic,   'dcdc'),
+    ...solar2.getConnectorPositions(schematic, 'solar2'),
+    ...last1.getConnectorPositions(schematic,  'last1'),
+  ];
+
+  // Knoten1: Solar1 → DCDC.in
+  // Knoten2: Solar2 → Last, DCDC.out → Last
+  const connections = [
+    { id: 'net-k1',      from: 'solar1.out', to: 'dcdc.in'   },
+    { id: 'net-k2-s2',   from: 'solar2.out', to: 'last1.in'  },
+    { id: 'net-k2-dcdc', from: 'dcdc.out',   to: 'last1.in'  },
+  ];
+
+  const blocked = [solar1, dcdc, solar2, last1].map(b => b.getImageDiv());
+
+  try {
+    const wire = new ElectricalWire(schematic, {
+      gridSize: 10, wireColor: '#7ecfff', wireWidth: 1.5, logging: false,
+    });
+    wire.setConnectors(connectors);
+    wire.setConnections(connections);
+    wire.setBlockedAreas(blocked, { shrink: 5 });
+    wire.render();
+    log('Routing OK');
+    attachWireInspector(schematic, connections, connectors);
+  } catch(e) {
+    log('Routing Fehler: ' + e.message, 'err');
+    console.error(e);
+    return;
+  }
+
+  // ── Simulation ──────────────────────────────────────────────────────────
+  const sim = new lastflussSim([
+    { id: 'k1', blocks: [solar1, dcdc] },
+    { id: 'k2', blocks: [solar2, last1, dcdc] },
+  ], { logging: true, epsilon: 0.1 });
+
+  const result = sim.solve();
+
+  if (result.converged) {
+    const u1 = result.voltages.get('k1').toFixed(2);
+    const u2 = result.voltages.get('k2').toFixed(2);
+    const ps1 = result.powers.get(solar1)?.out?.toFixed(1) ?? '?';
+    const ps2 = result.powers.get(solar2)?.out?.toFixed(1) ?? '?';
+    const pl  = result.powers.get(last1)?.in?.toFixed(1) ?? '?';
+    const pd  = result.powers.get(dcdc)?.out?.toFixed(1) ?? '?';
+    log(`Simulation OK (${result.iterations} Iter): U1=${u1}V U2=${u2}V | ` +
+        `Solar1=${ps1}W Solar2=${ps2}W Last=${pl}W DCDC=${pd}W`);
+  } else {
+    log('Simulation nicht konvergiert!', 'warn');
+  }
+});
+
+// ── Wire-Inspektor (Rechtsklick) ─────────────────────────────────────────────
+function attachWireInspector(container, connections, connectors) {
+  const panel = document.createElement('div');
+  panel.style.cssText = [
+    'display:none','position:fixed','z-index:9999',
+    'background:#0d1a2a','border:1px solid #7ecfff','border-radius:5px',
+    'padding:10px 14px','font-family:Courier New,monospace','font-size:0.72rem',
+    'color:#c8e8ff','line-height:1.7','min-width:280px','max-width:420px',
+    'box-shadow:0 4px 20px rgba(0,0,0,0.6)','white-space:pre',
+  ].join(';');
+  document.body.appendChild(panel);
+  document.addEventListener('click', () => panel.style.display = 'none');
+  panel.addEventListener('click', e => e.stopPropagation());
+
+  const copyBtn = document.createElement('button');
+  copyBtn.textContent = 'kopieren';
+  copyBtn.style.cssText = [
+    'display:block','margin-bottom:8px','padding:3px 10px',
+    'background:#1a3a5a','border:1px solid #7ecfff','border-radius:3px',
+    'color:#7ecfff','font-family:Courier New,monospace','font-size:0.7rem',
+    'cursor:pointer','width:100%',
+  ].join(';');
+  copyBtn.onclick = () => {
+    navigator.clipboard.writeText(panel.dataset.copyText || '').then(
+      () => { copyBtn.textContent = 'kopiert!'; setTimeout(() => copyBtn.textContent = 'kopieren', 1500); },
+      () => { copyBtn.textContent = 'Fehler'; }
+    );
+  };
+
+  container.addEventListener('contextmenu', e => {
+    const hit = e.target.closest('.ew-wire-hit');
+    if (!hit) return;
+    e.preventDefault();
+
+    const netId    = hit.dataset.netId || '';
+    const wirePaths = [...container.querySelectorAll(`.ew-wire[data-net-id="${CSS.escape(netId)}"]`)];
+    const netConns  = connections.filter(x => netId.split(',').includes(x.id));
+
+    function parsePath(d) {
+      const points = [], re = /[ML]([-\d.]+),([-\d.]+)/g;
+      let m;
+      while ((m = re.exec(d)) !== null) points.push({ x: parseFloat(m[1]), y: parseFloat(m[2]) });
+      const segments = [];
+      for (let i = 1; i < points.length; i++) {
+        const adx = Math.abs(points[i].x - points[i-1].x);
+        const ady = Math.abs(points[i].y - points[i-1].y);
+        segments.push({ dx: points[i].x-points[i-1].x, dy: points[i].y-points[i-1].y, ortho: adx < 0.5 || ady < 0.5 });
+      }
+      return { points, segments };
+    }
+
+    const pathInfos     = wirePaths.map((wp, pi) => { const d = wp.getAttribute('d'); const { points, segments } = parsePath(d); return { pi, d, points, segments, nonOrtho: segments.filter(s => !s.ortho) }; });
+    const totalSegs     = pathInfos.reduce((s, p) => s + p.segments.length, 0);
+    const totalNonOrtho = pathInfos.reduce((s, p) => s + p.nonOrtho.length, 0);
+
+    const lines = [
+      `Net:      ${netId}`,
+      `Pfade:    ${wirePaths.length}   Segmente gesamt: ${totalSegs}`,
+      ...netConns.map(c => `Verb.:    ${c.id}: ${c.from} -> ${c.to}`),
+      '',
+    ];
+    pathInfos.forEach(({ pi, d, points, segments, nonOrtho }) => {
+      lines.push(`-- Pfad [${pi}] ---------------------------`);
+      lines.push(`d: ${d}`);
+      lines.push(`Punkte (${points.length}):`);
+      points.forEach((p, i) => lines.push(`  [${i}] (${p.x.toFixed(1)}, ${p.y.toFixed(1)})`));
+      lines.push(`Segmente (${segments.length}):`);
+      segments.forEach((s, i) => lines.push(`  [${i}] dx=${s.dx.toFixed(1)} dy=${s.dy.toFixed(1)}${s.ortho ? '' : ' !! NICHT ORTHOGONAL'}`));
+      lines.push(nonOrtho.length ? `  !! ${nonOrtho.length} nicht-orthogonal` : `  OK alle orthogonal`);
+      lines.push('');
+    });
+    lines.push(totalNonOrtho ? `!! Gesamt: ${totalNonOrtho} nicht-orthogonale Segmente` : `OK Alle Segmente orthogonal`);
+
+    const info = lines.join('\n');
+    panel.dataset.copyText = info;
+    while (panel.firstChild) panel.removeChild(panel.firstChild);
+    panel.appendChild(copyBtn);
+    const pre = document.createElement('div');
+    pre.style.cssText = 'white-space:pre;overflow-x:auto;max-width:400px;';
+    pre.textContent = info;
+    panel.appendChild(pre);
+
+    panel.style.display = 'block';
+    panel.style.left = Math.min(e.clientX + 8, window.innerWidth  - 450) + 'px';
+    panel.style.top  = Math.min(e.clientY + 8, window.innerHeight - 420) + 'px';
+  });
+}
+</script>
+</body>
+</html>
