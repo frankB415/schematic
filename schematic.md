@@ -68,7 +68,7 @@ schematicBlock
 - `invalidateResult()` — markiert Ergebnis als ungültig
 
 ### Konkrete Blöcke
-Implementieren `render()`, `calcPower()` und `applyOperatingPoint()`.
+Implementieren `calcPower()` und `applyOperatingPoint()`. `render()` wird von `labeledBlock` geerbt.
 
 ---
 
@@ -151,7 +151,7 @@ calcPower(voltages)
 // Beispiele:
 //   SolarPanel.calcPower → { out: +290 }   // speist 290 W ein
 //   Last.calcPower       → { in:  -400 }   // verbraucht 400 W
-//   DCDC.calcPower       → { in: -290, out: +275.5 }  // nimmt 290 W, gibt 275.5 W ab
+//   DCDC.calcPower       → { in: -304.5, out: +275.5 }  // nimmt 304.5 W (inkl. Verluste), gibt 275.5 W ab
 //
 // _setResults() speichert Istwerte mit gleichem Vorzeichen:
 //   SolarPanel.results.pAct  < 0   (gibt ab)
