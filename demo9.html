@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Lastfluss Demo9 — Q3 · 2× Trafo-Gleichrichter · DC-Last</title>
+<link rel="stylesheet" href="/schematic/schematicBlock/schematicBlock.css">
+<link rel="stylesheet" href="/schematic/demo.css">
+</head>
+<body>
+
+<h1>Lastfluss Demo9 — Q3 · 2× Trafo-Gleichrichter · DC-Last</h1>
+<p class="subtitle">
+  k_ac: Spannungsquelle 400V L-L, 5MVA &nbsp;|&nbsp;
+  k_dc: gemeinsamer DC-Knoten (~310V) &nbsp;|&nbsp;
+  Topologie: Y (eine Quelle, zwei Gleichrichter, eine Last)
+</p>
+
+<!--
+  Layout (Y-Topologie):
+
+  [Quelle1]  x=100,y=60      [Quelle2]  x=300,y=60
+      | k1                        | k2
+  [TR-GR1]  x=100,y=200      [TR-GR2]  x=300,y=200
+      \         k_dc              /
+       ─────────┬─────────────────
+                |
+             [Last]  x=200,y=380
+-->
+<div id="schematic" style="width:700px; height:520px; position: relative;"></div>
+<div id="log"></div>
+
+<script src="/schematic/schematicBlock/schematicBlock.js"></script>
+<script src="/schematic/labeledBlock/labeledBlock.js"></script>
+<script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
+<script src="/schematic/lastflussBlock/last.js"></script>
+<script src="/schematic/lastflussKomplexBlock/lastflussKomplexBlock.js"></script>
+<script src="/schematic/lastflussKomplexBlock/spannungsquelle.js"></script>
+<script src="/schematic/lastflussKomplexBlock/trafoGleichrichter.js"></script>
+<script src="/schematic/simulator/baseSim.js"></script>
+<script src="/schematic/simulator/nodeBaseSim.js"></script>
+<script src="/schematic/simulator/lastflussSim.js"></script>
+<script src="/schematic/simulator/lastflussKomplexSim.js"></script>
+
+<script>
+
+const logEl = document.getElementById('log');
+function log(msg, cls = '') {
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = msg;
+    logEl.appendChild(d);
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── Blöcke ───────────────────────────────────────────────────────────────────
+
+// Gemeinsame AC-Quelle in der Mitte
+const quelle3 = new Spannungsquelle('Q3', {
+    uNom: 400, skNom: 5e6,
+    x: 300, y: 40,
+});
+
+const trafoGr1 = new TrafoGleichrichter('TR-GR1', {
+    u1Nenn: 400, u2Nenn: 230, sNenn: 100e3, ukPct: 4,
+    x: 150, y: 200,
+});
+
+const trafoGr2 = new TrafoGleichrichter('TR-GR2', {
+    u1Nenn: 400, u2Nenn: 230, sNenn: 200e3, ukPct: 6,
+    x: 500, y: 200,
+});
+
+// DC-Last: 250kW, aktiv 280–340V
+const last = new Last('Last', {
+    pNom: 250e3, uMin: 280, uMax: 340,
+    x: 300, y: 400,
+});
+
+// ── Render ───────────────────────────────────────────────────────────────────
+const schematic = document.getElementById('schematic');
+quelle3.render(schematic);
+trafoGr1.render(schematic);
+trafoGr2.render(schematic);
+last.render(schematic);
+
+// ── Simulation ───────────────────────────────────────────────────────────────
+//
+//  k_ac — AC-Knoten: Q3 + TR-GR1(in) + TR-GR2(in)
+//  k_dc — DC-Knoten: TR-GR1(out) + TR-GR2(out) + Last(in)
+//
+const sim = new lastflussKomplexSim([
+    { id: 'k_ac', blocks: [quelle3, trafoGr1, trafoGr2],  uMin: 350, uMax: 450 },
+    { id: 'k_dc', blocks: [trafoGr1, trafoGr2, last],     uMin: 0,   uMax: 315 },
+], { epsilon: 50, scanSteps: 10, logging: true });
+
+requestAnimationFrame(() => {
+
+    // ── Wires ─────────────────────────────────────────────────────────────────
+    const connectors = [
+        ...quelle3.getConnectorPositions(schematic,  'q3'),
+        ...trafoGr1.getConnectorPositions(schematic, 'tgr1'),
+        ...trafoGr2.getConnectorPositions(schematic, 'tgr2'),
+        ...last.getConnectorPositions(schematic,     'last'),
+    ];
+
+    const connections = [
+        { id: 'k_ac-l',  from: 'q3.out',   to: 'tgr1.in'  },  // k_ac: Q3 → TR-GR1
+        { id: 'k_ac-r',  from: 'q3.out',   to: 'tgr2.in'  },  // k_ac: Q3 → TR-GR2
+        { id: 'k_dc-l',  from: 'tgr1.out', to: 'last.in'  },  // k_dc: TR-GR1 → Last
+        { id: 'k_dc-r',  from: 'tgr2.out', to: 'last.in'  },  // k_dc: TR-GR2 → Last
+    ];
+
+    const blocked = [quelle3, trafoGr1, trafoGr2, last].map(b => b.getImageDiv());
+
+    try {
+        const wire = new ElectricalWire(schematic, {
+            gridSize: 10, wireColor: '#a0c0ff', wireWidth: 1.5,
+        });
+        wire.setConnectors(connectors);
+        wire.setConnections(connections);
+        wire.setBlockedAreas(blocked, { shrink: 5 });
+        wire.render();
+        log('Routing OK');
+    } catch(e) {
+        log(`Routing Fehler: ${e.message}`, 'err');
+    }
+
+    // ── Solve ─────────────────────────────────────────────────────────────────
+    try {
+        const { voltages, converged, iterations } = sim.solve();
+
+        const fmtAC = v => {
+            if (!v) return '?';
+            const abs = Math.sqrt(v.re**2 + v.im**2) / 1000;
+            const phi = Math.atan2(v.im, v.re) * 180 / Math.PI;
+            return `${abs.toFixed(3)} kV ∠ ${phi.toFixed(1)}°`;
+        };
+        const fmtDC = v => v == null ? '?' : `${(+v).toFixed(1)} V`;
+
+        log(`${converged ? '✓' : '⚠'} Konvergenz nach ${iterations} Iterationen`, converged ? '' : 'warn');
+        log(`k_ac (AC): U = ${fmtAC(voltages.get('k_ac'))}`);
+        log(`k_dc (DC): U = ${fmtDC(voltages.get('k_dc'))}`);
+
+        log('── Blockergebnisse ──');
+        [
+            ['Q3',        quelle3],
+            ['TR-GR1',    trafoGr1],
+            ['TR-GR2',    trafoGr2],
+            ['Last (DC)', last],
+        ].forEach(([name, block]) => {
+            log(`${name}:`);
+            Object.entries(block.results || {}).forEach(([key, val]) => {
+                const fmt = block._resultFormats?.[key];
+                log(`  ${fmt ? fmt(val) : JSON.stringify(val)}`);
+            });
+        });
+    } catch(e) {
+        log(`Solver Fehler: ${e.message}`, 'err');
+        console.error(e);
+    }
+});
+
+</script>
+</body>
+</html>
