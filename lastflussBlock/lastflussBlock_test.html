@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>lastflussBlock – Tests</title>
+    <link rel="stylesheet" href="../schematicBlock/schematicBlock.css">
+    <script src="../schematicBlock/schematicBlock.js"></script>
+    <script src="../labeledBlock/labeledBlock.js"></script>
+    <script src="lastflussBlock.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 2rem; background: #f4f4f4; }
+        h1   { font-size: 1.2rem; margin-bottom: 0.5rem; }
+        .sub { font-size: 0.8rem; color: #666; margin-bottom: 1.5rem; }
+        h2   { font-size: 1rem; margin: 1.5rem 0 0.5rem; }
+        .test-result { display: flex; align-items: center; gap: 0.6rem;
+            padding: 0.3rem 0; border-bottom: 1px solid #ddd; font-size: 0.9rem; }
+        .test-result:last-child { border-bottom: none; }
+        .badge { font-size: 0.75rem; font-weight: bold; padding: 2px 8px;
+            border-radius: 20px; min-width: 50px; text-align: center; }
+        .pass  { background: #d4edda; color: #155724; }
+        .fail  { background: #f8d7da; color: #721c24; }
+        .summary { margin-top: 0.75rem; font-weight: bold; font-size: 0.95rem; }
+        .demo-schematic {
+            position: relative; width: 760px; height: 280px;
+            background: #fff; border: 1px solid #ccc; border-radius: 4px;
+            margin-bottom: 0.5rem;
+        }
+        .sb-crosshair {
+            position: absolute; pointer-events: none;
+            transform: translate(-50%, -50%);
+        }
+        .sb-crosshair::before, .sb-crosshair::after {
+            content: ''; position: absolute; background: rgba(220,50,50,0.7);
+        }
+        .sb-crosshair::before { width: 1px; height: 16px; left: 0; top: -8px; }
+        .sb-crosshair::after  { width: 16px; height: 1px; left: -8px; top: 0; }
+        .sb-crosshair-label {
+            position: absolute; font-size: 9px; color: rgba(200,0,0,0.85);
+            font-family: monospace; left: 6px; top: -14px; white-space: nowrap;
+        }
+        .sb-text1 { background: rgba(255,210,80,0.18); border: 1px dashed #c8a030;
+            min-width: 8px; min-height: 8px; font-size: 0.72rem; line-height: 1.3; }
+        .sb-text2 { background: rgba(80,160,255,0.15); border: 1px dashed #1a6fcc;
+            min-width: 8px; min-height: 8px; font-size: 0.72rem; line-height: 1.3; color:#1a6fcc; }
+        .legend { font-size: 0.72rem; color: #666; margin-bottom: 8px; }
+        #event-log { font-size: 0.78rem; font-family: monospace; background: #fff;
+            border: 1px solid #ddd; border-radius: 4px; padding: 0.5rem;
+            min-height: 36px; max-height: 80px; overflow-y: auto; margin-top: 0.5rem; }
+    </style>
+</head>
+<body>
+<h1>lastflussBlock — Tests</h1>
+<p class="sub">Jede Test-Klasse eigenständig: eigenes SVG, Größe, Connectoren, Params, calcPower</p>
+<div id="results"></div>
+
+<h2>Demo — vor und nach applyOperatingPoint()</h2>
+<p class="legend">Gelb = sb-text1 (Params) &nbsp;|&nbsp; Blau = sb-text2 (Results nach Simulation) &nbsp;|&nbsp; Rotes Kreuz = Anker</p>
+<div class="demo-schematic" id="s1"></div>
+<div id="event-log">— noch keine Events —</div>
+
+<script>
+// ── Testrahmen ───────────────────────────────────────────────────────────────
+const results = [];
+function assert(desc, fn) {
+    try { fn(); results.push({ ok: true, desc }); }
+    catch(e) { results.push({ ok: false, desc, err: e.message }); }
+}
+function assertEqual(a, b) { if (a !== b) throw new Error(`Erwartet "${b}", erhalten "${a}"`); }
+function assertNotNull(v)  { if (v == null) throw new Error('Wert ist null/undefined'); }
+function assertThrows(fn)  {
+    let t = false; try { fn(); } catch(e) { t = true; }
+    if (!t) throw new Error('Erwartet: Exception nicht geworfen');
+}
+function assertClose(a, b, eps=0.01) {
+    if (Math.abs(a-b) > eps) throw new Error(`Erwartet ~${b}, erhalten ${a}`);
+}
+
+// ── SVG-Helfer ───────────────────────────────────────────────────────────────
+function makeSvg(w, h, color, label) {
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">
+          <rect x="2" y="2" width="${w-4}" height="${h-4}" rx="3"
+                fill="none" stroke="${color}" stroke-width="2"/>
+          <text x="${w/2}" y="${h/2+4}" text-anchor="middle"
+                fill="${color}" font-size="10" font-family="monospace">${label}</text>
+        </svg>`
+    );
+}
+
+// ── Unabhängige Test-Klassen ─────────────────────────────────────────────────
+
+// Klasse Gen: Erzeuger — Einspeisung proportional zur Spannung
+// Connector: 'out' (unten)
+class BlockGen extends lastflussBlock {
+    constructor(label, { pNom = 200, voc = 40 } = {}, opts = {}) {
+        super({ imageW: 60, imageH: 80, textLayout: 'lr',
+                imageSrc: makeSvg(60, 80, '#4a9a4a', 'G'), ...opts });
+        this._label = label;
+        this.pNom = pNom;
+        this.voc  = voc;
+        this.connectors = [
+            { name: 'out', x: '50%', y: '100%', type: 'electrical', direction: 'down', minLength: 20 },
+        ];
+        this.params = [
+            { key: 'pNom', label: 'P Nenn', value: pNom, format: v => `${v} W`  },
+            { key: 'voc',  label: 'Voc',    value: voc,  format: v => `${v} V`  },
+        ];
+    }
+    calcPower(voltages) {
+        const u = voltages.out ?? 0;
+        if (u >= this.voc) return { out: 0 };
+        if (u <= 0)        return { out: this.pNom };
+        return { out: this.pNom * (1 - (u / this.voc) ** 2) };
+    }
+    applyOperatingPoint(voltages) {
+        const p = this.calcPower(voltages).out;
+        const u = voltages.out ?? 0;
+        this._resultFormats = {
+            pAct: v => `pAct: ${v} W`,
+            uAct: v => `uAct: ${v} V`,
+        };
+        this._setResults({
+            pAct: Math.round(p * 10) / 10,
+            uAct: Math.round(u * 100) / 100,
+        });
+    }
+}
+
+// Klasse Load: Verbraucher — konstante Leistungsaufnahme
+// Connector: 'in' (oben)
+class BlockLoad extends lastflussBlock {
+    constructor(label, { pNom = 150, uNom = 24 } = {}, opts = {}) {
+        super({ imageW: 60, imageH: 60, textLayout: 'lr',
+                imageSrc: makeSvg(60, 60, '#c05050', 'L'), ...opts });
+        this._label = label;
+        this.pNom = pNom;
+        this.uNom = uNom;
+        this.connectors = [
+            { name: 'in', x: '50%', y: '0%', type: 'electrical', direction: 'up', minLength: 20 },
+        ];
+        this.params = [
+            { key: 'pNom', label: 'P Nenn', value: pNom, format: v => `${v} W` },
+            { key: 'uNom', label: 'U Nenn', value: uNom, format: v => `${v} V` },
+        ];
+    }
+    calcPower(voltages) {
+        return { in: -this.pNom };
+    }
+    applyOperatingPoint(voltages) {
+        const u = voltages.in ?? 0;
+        this._resultFormats = {
+            pAct: v => `pAct: ${v} W`,
+            uAct: v => `uAct: ${v} V`,
+        };
+        this._setResults({
+            pAct: Math.round(-this.pNom * 10) / 10,
+            uAct: Math.round(u * 100) / 100,
+        });
+    }
+}
+
+// Klasse Bat: Batterie — bidirektional, laden/entladen
+// Connector: 'term' (rechts)
+class BlockBat extends lastflussBlock {
+    constructor(label, { soc = 0.8, pMax = 100 } = {}, opts = {}) {
+        super({ imageW: 50, imageH: 50, textLayout: 'tb',
+                imageSrc: makeSvg(50, 50, '#1a6fcc', 'B'), ...opts });
+        this._label = label;
+        this.soc  = soc;
+        this.pMax = pMax;
+        this.connectors = [
+            { name: 'term', x: '100%', y: '50%', type: 'electrical', direction: 'right', minLength: 20 },
+        ];
+        this.params = [
+            { key: 'soc',  label: 'SOC',   value: soc,  format: v => `${(v*100).toFixed(0)} %` },
+            { key: 'pMax', label: 'P max', value: pMax, format: v => `${v} W` },
+        ];
+    }
+    calcPower(voltages) {
+        // Batterie gleicht Überschuss/Defizit aus (vereinfacht)
+        return { term: 0 };
+    }
+    applyOperatingPoint(voltages) {
+        const u = voltages.term ?? 0;
+        this._resultFormats = { uAct: v => `uAct: ${v} V` };
+        this._setResults({ uAct: Math.round(u * 100) / 100 });
+    }
+}
+
+// ── Tests: Instanziierung ────────────────────────────────────────────────────
+assert('lastflussBlock kann nicht direkt instanziiert werden', () =>
+    assertThrows(() => new lastflussBlock())
+);
+assert('lastflussBlock ist instanceof labeledBlock', () => {
+    if (!(new BlockGen('G1') instanceof labeledBlock))
+        throw new Error('nicht instanceof labeledBlock');
+});
+assert('lastflussBlock ist instanceof schematicBlock', () => {
+    if (!(new BlockGen('G1') instanceof schematicBlock))
+        throw new Error('nicht instanceof schematicBlock');
+});
+assert('BlockGen kann instanziiert werden', () => assertNotNull(new BlockGen('G1')));
+assert('BlockLoad kann instanziiert werden', () => assertNotNull(new BlockLoad('L1')));
+assert('BlockBat kann instanziiert werden', () => assertNotNull(new BlockBat('B1')));
+assert('calcPower() wirft in nicht-implementierter Klasse', () => {
+    class NoCalc extends lastflussBlock {
+        constructor() { super({ imageW:10,imageH:10,imageSrc:'data:,x' }); this.connectors=[]; }
+        applyOperatingPoint() {}
+    }
+    assertThrows(() => new NoCalc().calcPower({}));
+});
+assert('applyOperatingPoint() wirft in nicht-implementierter Klasse', () => {
+    class NoAOP extends lastflussBlock {
+        constructor() { super({ imageW:10,imageH:10,imageSrc:'data:,x' }); this.connectors=[]; }
+        calcPower() { return {}; }
+    }
+    assertThrows(() => new NoAOP().applyOperatingPoint({}));
+});
+
+// ── Tests: calcPower() — kein Seiteneffekt ───────────────────────────────────
+assert('BlockGen.calcPower() bei u=0 = pNom', () => {
+    const b = new BlockGen('G1', { pNom: 200, voc: 40 });
+    assertClose(b.calcPower({ out: 0 }).out, 200);
+});
+assert('BlockGen.calcPower() bei u=voc = 0', () => {
+    const b = new BlockGen('G1', { pNom: 200, voc: 40 });
+    assertClose(b.calcPower({ out: 40 }).out, 0);
+});
+assert('BlockGen.calcPower() bei u=20 (halbe Voc)', () => {
+    const b = new BlockGen('G1', { pNom: 200, voc: 40 });
+    assertClose(b.calcPower({ out: 20 }).out, 150, 1);
+});
+assert('BlockGen.calcPower() ändert this.results nicht', () => {
+    const b = new BlockGen('G1');
+    b.calcPower({ out: 20 });
+    assertEqual(Object.keys(b.results).length, 0);
+});
+assert('BlockLoad.calcPower() = -pNom immer', () => {
+    const b = new BlockLoad('L1', { pNom: 150 });
+    assertClose(b.calcPower({ in: 0   }).in, -150);
+    assertClose(b.calcPower({ in: 24  }).in, -150);
+    assertClose(b.calcPower({ in: 100 }).in, -150);
+});
+assert('BlockLoad.calcPower() ändert this.results nicht', () => {
+    const b = new BlockLoad('L1');
+    b.calcPower({ in: 24 });
+    assertEqual(Object.keys(b.results).length, 0);
+});
+assert('calcPower() kann mehrfach aufgerufen werden ohne Seiteneffekt', () => {
+    const b = new BlockGen('G1', { pNom: 200, voc: 40 });
+    const p1 = b.calcPower({ out: 20 }).out;
+    const p2 = b.calcPower({ out: 20 }).out;
+    assertClose(p1, p2);
+    assertEqual(Object.keys(b.results).length, 0);
+});
+
+// ── Tests: applyOperatingPoint() ────────────────────────────────────────────
+assert('BlockGen.applyOperatingPoint() setzt results.valid = true', () => {
+    const c = document.createElement('div'); const b = new BlockGen('G1'); b.render(c);
+    b.applyOperatingPoint({ out: 20 });
+    assertEqual(b.results.valid, true);
+});
+assert('BlockGen.applyOperatingPoint() setzt pAct', () => {
+    const c = document.createElement('div'); const b = new BlockGen('G1',{pNom:200,voc:40}); b.render(c);
+    b.applyOperatingPoint({ out: 0 });
+    assertClose(b.results.pAct, 200);
+});
+assert('BlockGen.applyOperatingPoint() setzt uAct', () => {
+    const c = document.createElement('div'); const b = new BlockGen('G1'); b.render(c);
+    b.applyOperatingPoint({ out: 33.15 });
+    assertClose(b.results.uAct, 33.15);
+});
+assert('BlockLoad.applyOperatingPoint() setzt pAct = -pNom', () => {
+    const c = document.createElement('div'); const b = new BlockLoad('L1',{pNom:150}); b.render(c);
+    b.applyOperatingPoint({ in: 24 });
+    assertClose(b.results.pAct, -150);
+});
+assert('BlockLoad.applyOperatingPoint() setzt uAct', () => {
+    const c = document.createElement('div'); const b = new BlockLoad('L1'); b.render(c);
+    b.applyOperatingPoint({ in: 21.5 });
+    assertClose(b.results.uAct, 21.5);
+});
+
+// ── Tests: _setResults() / renderResults() ──────────────────────────────────
+assert('_setResults() schreibt in this.results', () => {
+    const c = document.createElement('div'); const b = new BlockGen('G1'); b.render(c);
+    b._setResults({ pAct: 123.4, uAct: 30.0 });
+    assertClose(b.results.pAct, 123.4);
+    assertClose(b.results.uAct, 30.0);
+});
+assert('_setResults() setzt results.valid = true', () => {
+    const c = document.createElement('div'); const b = new BlockGen('G1'); b.render(c);
+    b._setResults({ pAct: 100 });
+    assertEqual(b.results.valid, true);
+});
+assert('renderResults() erzeugt .sb-results in sb-text2', () => {
+    const c = document.createElement('div'); const b = new BlockGen('G1'); b.render(c);
+    b._setResults({ pAct: 100, uAct: 30 });
+    assertNotNull(c.querySelector('.sb-text2 .sb-results'));
+});
+assert('renderResults() erzeugt .sb-result pro Wert', () => {
+    const c = document.createElement('div'); const b = new BlockGen('G1'); b.render(c);
+    b._setResults({ pAct: 100, uAct: 30 });
+    assertEqual(c.querySelectorAll('.sb-text2 .sb-result').length, 2);
+});
+assert('renderResults() idempotent — kein Duplikat', () => {
+    const c = document.createElement('div'); const b = new BlockGen('G1'); b.render(c);
+    b._setResults({ pAct: 100 });
+    b._setResults({ pAct: 200 });
+    assertEqual(c.querySelectorAll('.sb-results').length, 1);
+    assertEqual(c.querySelectorAll('.sb-result').length, 1);
+});
+assert('renderResults() nutzt _resultFormats für Formatierung', () => {
+    const c = document.createElement('div'); const b = new BlockGen('G1',{pNom:200,voc:40}); b.render(c);
+    b.applyOperatingPoint({ out: 0 });
+    const text = c.querySelector('[data-key="pAct"]').textContent;
+    assertEqual(text.includes('W'), true);
+});
+assert('Results liegen in sb-text2, nicht sb-text1', () => {
+    const c = document.createElement('div'); const b = new BlockGen('G1'); b.render(c);
+    b._setResults({ pAct: 100 });
+    assertEqual(c.querySelectorAll('.sb-text1 .sb-result').length, 0);
+    assertEqual(c.querySelectorAll('.sb-text2 .sb-result').length, 1);
+});
+
+// ── Tests: invalidateResult() ────────────────────────────────────────────────
+assert('invalidateResult() setzt results.valid = false', () => {
+    const c = document.createElement('div'); const b = new BlockGen('G1'); b.render(c);
+    b._setResults({ pAct: 100 });
+    b.invalidateResult();
+    assertEqual(b.results.valid, false);
+});
+assert('invalidateResult() setzt sb-results--invalid', () => {
+    const c = document.createElement('div'); const b = new BlockGen('G1'); b.render(c);
+    b._setResults({ pAct: 100 });
+    b.invalidateResult();
+    assertNotNull(c.querySelector('.sb-results--invalid'));
+});
+assert('_setResults() nach invalidateResult() setzt valid = true', () => {
+    const c = document.createElement('div'); const b = new BlockGen('G1'); b.render(c);
+    b._setResults({ pAct: 100 });
+    b.invalidateResult();
+    b._setResults({ pAct: 200 });
+    assertEqual(b.results.valid, true);
+});
+
+// ── Tests: Params nicht überschrieben durch Results ─────────────────────────
+assert('BlockGen: pNom in sb-text1 nach applyOperatingPoint() unverändert', () => {
+    const c = document.createElement('div'); const b = new BlockGen('G1',{pNom:200}); b.render(c);
+    b.applyOperatingPoint({ out: 20 });
+    assertEqual(c.querySelector('[data-key="pNom"]').textContent, 'pNom: 200 W');
+});
+assert('BlockLoad: pNom in sb-text1 nach applyOperatingPoint() unverändert', () => {
+    const c = document.createElement('div'); const b = new BlockLoad('L1',{pNom:150}); b.render(c);
+    b.applyOperatingPoint({ in: 24 });
+    assertEqual(c.querySelector('[data-key="pNom"]').textContent, 'pNom: 150 W');
+});
+
+// ── Ergebnisse rendern ───────────────────────────────────────────────────────
+const rDiv = document.getElementById('results');
+results.forEach(r => {
+    const row = document.createElement('div'); row.className = 'test-result';
+    const b = document.createElement('span'); b.className=`badge ${r.ok?'pass':'fail'}`; b.textContent=r.ok?'PASS':'FAIL';
+    const t = document.createElement('span'); t.textContent=r.desc+(r.err?' — '+r.err:'');
+    row.appendChild(b); row.appendChild(t); rDiv.appendChild(row);
+});
+const passed = results.filter(r=>r.ok).length;
+const sum = document.createElement('div'); sum.className='summary';
+sum.style.color = passed===results.length ? '#155724' : '#721c24';
+sum.textContent = `${passed} / ${results.length} Tests bestanden`;
+rDiv.appendChild(sum);
+
+// ── Hilfsfunktionen ──────────────────────────────────────────────────────────
+function drawCrosshair(el, x, y) {
+    const ch = document.createElement('div'); ch.className='sb-crosshair';
+    ch.style.left=x+'px'; ch.style.top=y+'px';
+    const lbl=document.createElement('span'); lbl.className='sb-crosshair-label';
+    lbl.textContent=`(${x},${y})`; ch.appendChild(lbl); el.appendChild(ch);
+}
+const log = document.getElementById('event-log');
+function logEv(msg) {
+    if (log.textContent.includes('noch keine')) log.textContent='';
+    const d=document.createElement('div'); d.textContent=msg; log.insertBefore(d,log.firstChild);
+}
+document.body.addEventListener('sb-select', e => logEv(`sb-select: ${e.detail.block.constructor.name}`));
+
+// ── Demo: vor und nach applyOperatingPoint() ─────────────────────────────────
+const s1 = document.getElementById('s1');
+
+const gen1  = new BlockGen( 'Gen1',  { pNom:200, voc:40 }, { x:120, y:140 }); gen1.render(s1);
+const gen2  = new BlockGen( 'Gen2',  { pNom:150, voc:36 }, { x:300, y:140 }); gen2.render(s1);
+const load1 = new BlockLoad('Load1', { pNom:300, uNom:24 }, { x:500, y:120 }); load1.render(s1);
+const bat1  = new BlockBat( 'Bat1',  { soc:0.75, pMax:80 }, { x:660, y:140 }); bat1.render(s1);
+
+[120,300,500,660].forEach((x,i) => drawCrosshair(s1, x, [140,140,120,140][i]));
+
+// Nach 2s: applyOperatingPoint simulieren
+setTimeout(() => {
+    gen1.applyOperatingPoint({ out: 25.3 });
+    gen2.applyOperatingPoint({ out: 25.3 });
+    load1.applyOperatingPoint({ in: 25.3 });
+    bat1.applyOperatingPoint({ term: 25.3 });
+    logEv('applyOperatingPoint aufgerufen — Results erscheinen in sb-text2 (blau)');
+}, 2000);
+
+// Nach 4s: invalidateResult bei einem Block
+setTimeout(() => {
+    load1.invalidateResult();
+    logEv('invalidateResult() auf Load1 — sb-results--invalid gesetzt');
+}, 4000);
+</script>
+</body>
+</html>
