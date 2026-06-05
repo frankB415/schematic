@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>labeledBlock – Tests</title>
+    <link rel="stylesheet" href="../schematicBlock/schematicBlock.css">
+    <script src="../schematicBlock/schematicBlock.js"></script>
+    <script src="labeledBlock.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 2rem; background: #f4f4f4; }
+        h1   { font-size: 1.2rem; margin-bottom: 0.5rem; }
+        .sub { font-size: 0.8rem; color: #666; margin-bottom: 1.5rem; }
+        h2   { font-size: 1rem; margin: 1.5rem 0 0.5rem; }
+        .test-result { display: flex; align-items: center; gap: 0.6rem;
+            padding: 0.3rem 0; border-bottom: 1px solid #ddd; font-size: 0.9rem; }
+        .test-result:last-child { border-bottom: none; }
+        .badge { font-size: 0.75rem; font-weight: bold; padding: 2px 8px;
+            border-radius: 20px; min-width: 50px; text-align: center; }
+        .pass  { background: #d4edda; color: #155724; }
+        .fail  { background: #f8d7da; color: #721c24; }
+        .summary { margin-top: 0.75rem; font-weight: bold; font-size: 0.95rem; }
+        .demo-schematic {
+            position: relative; width: 760px; height: 280px;
+            background: #fff; border: 1px solid #ccc; border-radius: 4px;
+            margin-bottom: 0.5rem;
+        }
+        .sb-crosshair {
+            position: absolute; pointer-events: none;
+            transform: translate(-50%, -50%);
+        }
+        .sb-crosshair::before, .sb-crosshair::after {
+            content: ''; position: absolute; background: rgba(220,50,50,0.7);
+        }
+        .sb-crosshair::before { width: 1px; height: 16px; left: 0; top: -8px; }
+        .sb-crosshair::after  { width: 16px; height: 1px; left: -8px; top: 0; }
+        .sb-crosshair-label {
+            position: absolute; font-size: 9px; color: rgba(200,0,0,0.85);
+            font-family: monospace; left: 6px; top: -14px; white-space: nowrap;
+        }
+        .sb-text1 { background: rgba(255,210,80,0.18); border: 1px dashed #c8a030;
+            min-width: 8px; min-height: 8px; font-size: 0.72rem; line-height: 1.3; }
+        .sb-text2 { background: rgba(80,160,255,0.15); border: 1px dashed #1a6fcc;
+            min-width: 8px; min-height: 8px; font-size: 0.72rem; line-height: 1.3; color:#1a6fcc; }
+        .legend { font-size: 0.72rem; color: #666; margin-bottom: 8px; }
+        #event-log { font-size: 0.78rem; font-family: monospace; background: #fff;
+            border: 1px solid #ddd; border-radius: 4px; padding: 0.5rem;
+            min-height: 36px; max-height: 80px; overflow-y: auto; margin-top: 0.5rem; }
+    </style>
+</head>
+<body>
+<h1>labeledBlock — Tests</h1>
+<p class="sub">Jede Test-Klasse eigenständig: eigenes SVG, Größe, Connectoren, Params</p>
+<div id="results"></div>
+
+<h2>Demo 1 — wenig Params</h2>
+<p class="legend">Gelb = sb-text1 (Name + Params) &nbsp;|&nbsp; Blau = sb-text2 (leer / Results) &nbsp;|&nbsp; Rotes Kreuz = Anker</p>
+<div class="demo-schematic" id="s1"></div>
+
+<h2>Demo 2 — viele Params, tb-Layout</h2>
+<div class="demo-schematic" id="s2"></div>
+
+<div id="event-log">— noch keine Events —</div>
+
+<script>
+// ── Testrahmen ───────────────────────────────────────────────────────────────
+const results = [];
+function assert(desc, fn) {
+    try { fn(); results.push({ ok: true, desc }); }
+    catch(e) { results.push({ ok: false, desc, err: e.message }); }
+}
+function assertEqual(a, b) { if (a !== b) throw new Error(`Erwartet "${b}", erhalten "${a}"`); }
+function assertNotNull(v)  { if (v == null) throw new Error('Wert ist null/undefined'); }
+function assertThrows(fn)  {
+    let t = false; try { fn(); } catch(e) { t = true; }
+    if (!t) throw new Error('Erwartet: Exception nicht geworfen');
+}
+
+// ── SVG-Helfer ───────────────────────────────────────────────────────────────
+function makeSvg(w, h, color, label) {
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">
+          <rect x="2" y="2" width="${w-4}" height="${h-4}" rx="3"
+                fill="none" stroke="${color}" stroke-width="2"/>
+          <text x="${w/2}" y="${h/2+4}" text-anchor="middle"
+                fill="${color}" font-size="10" font-family="monospace">${label}</text>
+        </svg>`
+    );
+}
+
+// ── Unabhängige Test-Klassen ─────────────────────────────────────────────────
+
+// Klasse R: Widerstand — 2 Params, lr-Layout
+class BlockR extends labeledBlock {
+    constructor(label, opts = {}) {
+        super({ imageW: 80, imageH: 32, textLayout: 'lr',
+                imageSrc: makeSvg(80, 32, '#1a6fcc', 'R'), ...opts });
+        this._label = label;
+        this.connectors = [
+            { name: 'left',  x: '0%',   y: '50%', type: 'electrical', direction: 'left',  minLength: 20 },
+            { name: 'right', x: '100%', y: '50%', type: 'electrical', direction: 'right', minLength: 20 },
+        ];
+        this.params = [
+            { key: 'R', label: 'Widerstand', value: 100, format: v => `${v} Ω` },
+            { key: 'P', label: 'Leistung',   value: 0.5, format: v => `${v} W` },
+        ];
+    }
+}
+
+// Klasse C: Kondensator — 1 Param, tb-Layout
+class BlockC extends labeledBlock {
+    constructor(label, opts = {}) {
+        super({ imageW: 32, imageH: 60, textLayout: 'tb',
+                imageSrc: makeSvg(32, 60, '#4a9a4a', 'C'), ...opts });
+        this._label = label;
+        this.connectors = [
+            { name: 'top',    x: '50%', y: '0%',   type: 'electrical', direction: 'up'   },
+            { name: 'bottom', x: '50%', y: '100%', type: 'electrical', direction: 'down' },
+        ];
+        this.params = [
+            { key: 'C', label: 'Kapazität', value: 10, format: v => `${v} µF` },
+        ];
+    }
+}
+
+// Klasse S: Solar — 6 Params, lr-Layout
+class BlockS extends labeledBlock {
+    constructor(label, opts = {}) {
+        super({ imageW: 60, imageH: 80, textLayout: 'lr',
+                imageSrc: makeSvg(60, 80, '#c8a030', 'S'), ...opts });
+        this._label = label;
+        this.connectors = [
+            { name: 'out', x: '50%', y: '100%', type: 'electrical', direction: 'down', minLength: 24 },
+        ];
+        this.params = [
+            { key: 'pNom',  label: 'P Nenn',      value: 300,  format: v => `${v} Wp`  },
+            { key: 'voc',   label: 'Leerlaufsp.',  value: 48,   format: v => `${v} V`   },
+            { key: 'vmpp',  label: 'MPP-Spannung', value: 38.5, format: v => `${v} V`   },
+            { key: 'impp',  label: 'MPP-Strom',    value: 7.8,  format: v => `${v} A`   },
+            { key: 'eta',   label: 'Wirkungsgrad', value: 0.95, format: v => `${(v*100).toFixed(0)} %` },
+            { key: 'tNom',  label: 'T Nenn',       value: 25,   format: v => `${v} °C`  },
+        ];
+    }
+}
+
+// Klasse N: keine Params — nur Name
+class BlockN extends labeledBlock {
+    constructor(label, opts = {}) {
+        super({ imageW: 50, imageH: 50, textLayout: 'lr',
+                imageSrc: makeSvg(50, 50, '#888', 'N'), ...opts });
+        this._label = label;
+        this.connectors = [];
+        this.params = [];
+    }
+}
+
+// ── Tests: Instanziierung ────────────────────────────────────────────────────
+assert('labeledBlock kann nicht direkt instanziiert werden', () =>
+    assertThrows(() => new labeledBlock())
+);
+assert('labeledBlock ist instanceof schematicBlock', () => {
+    if (!(new BlockR('R1') instanceof schematicBlock))
+        throw new Error('nicht instanceof schematicBlock');
+});
+assert('BlockR kann instanziiert werden', () => assertNotNull(new BlockR('R1')));
+assert('BlockC kann instanziiert werden', () => assertNotNull(new BlockC('C1')));
+assert('BlockS kann instanziiert werden', () => assertNotNull(new BlockS('S1')));
+assert('BlockN kann instanziiert werden', () => assertNotNull(new BlockN('N1')));
+
+// ── Tests: setName ───────────────────────────────────────────────────────────
+assert('BlockR: setName() schreibt in sb-text1', () => {
+    const c = document.createElement('div'); new BlockR('R1').render(c);
+    assertEqual(c.querySelector('.sb-text1 .sb-name').textContent, 'R1');
+});
+assert('BlockC: setName() schreibt in sb-text1', () => {
+    const c = document.createElement('div'); new BlockC('C1').render(c);
+    assertEqual(c.querySelector('.sb-text1 .sb-name').textContent, 'C1');
+});
+assert('BlockS: setName() schreibt in sb-text1', () => {
+    const c = document.createElement('div'); new BlockS('Solar1').render(c);
+    assertEqual(c.querySelector('.sb-text1 .sb-name').textContent, 'Solar1');
+});
+assert('setName() ist als erstes Kind in sb-text1', () => {
+    const c = document.createElement('div'); new BlockR('R1').render(c);
+    assertEqual(c.querySelector('.sb-text1').firstChild.className, 'sb-name');
+});
+assert('setName() idempotent: nur ein .sb-name', () => {
+    const c = document.createElement('div'); const b = new BlockR('R1'); b.render(c);
+    b.setName('R2'); b.setName('R3');
+    assertEqual(c.querySelectorAll('.sb-name').length, 1);
+    assertEqual(c.querySelector('.sb-name').textContent, 'R3');
+});
+
+// ── Tests: renderParams ──────────────────────────────────────────────────────
+assert('BlockR: 2 sb-property in sb-text1', () => {
+    const c = document.createElement('div'); new BlockR('R1').render(c);
+    assertEqual(c.querySelectorAll('.sb-text1 .sb-property').length, 2);
+});
+assert('BlockC: 1 sb-property in sb-text1', () => {
+    const c = document.createElement('div'); new BlockC('C1').render(c);
+    assertEqual(c.querySelectorAll('.sb-text1 .sb-property').length, 1);
+});
+assert('BlockS: 6 sb-property in sb-text1', () => {
+    const c = document.createElement('div'); new BlockS('S1').render(c);
+    assertEqual(c.querySelectorAll('.sb-text1 .sb-property').length, 6);
+});
+assert('BlockN: 0 sb-property', () => {
+    const c = document.createElement('div'); new BlockN('N1').render(c);
+    assertEqual(c.querySelectorAll('.sb-property').length, 0);
+});
+assert('BlockR: format() korrekt angewendet (R: 100 Ω)', () => {
+    const c = document.createElement('div'); new BlockR('R1').render(c);
+    assertEqual(c.querySelector('[data-key="R"]').textContent, 'R: 100 Ω');
+});
+assert('BlockC: format() korrekt angewendet (C: 10 µF)', () => {
+    const c = document.createElement('div'); new BlockC('C1').render(c);
+    assertEqual(c.querySelector('[data-key="C"]').textContent, 'C: 10 µF');
+});
+assert('BlockS: format() eta korrekt (eta: 95 %)', () => {
+    const c = document.createElement('div'); new BlockS('S1').render(c);
+    assertEqual(c.querySelector('[data-key="eta"]').textContent, 'eta: 95 %');
+});
+assert('renderParams() kein Duplikat bei doppeltem render()', () => {
+    const c = document.createElement('div'); const b = new BlockR('R1');
+    b.render(c); b.render(c);
+    assertEqual(c.querySelectorAll('.sb-property').length, 2);
+});
+assert('sb-properties liegt in sb-text1', () => {
+    const c = document.createElement('div'); new BlockR('R1').render(c);
+    assertNotNull(c.querySelector('.sb-text1 .sb-properties'));
+});
+
+// ── Tests: getParam / setParam ───────────────────────────────────────────────
+assert('BlockR: getParam("R") = 100', () =>
+    assertEqual(new BlockR('R1').getParam('R'), 100)
+);
+assert('BlockC: getParam("C") = 10', () =>
+    assertEqual(new BlockC('C1').getParam('C'), 10)
+);
+assert('BlockS: getParam("voc") = 48', () =>
+    assertEqual(new BlockS('S1').getParam('voc'), 48)
+);
+assert('getParam() unbekannter key = undefined', () =>
+    assertEqual(new BlockR('R1').getParam('X'), undefined)
+);
+assert('BlockN: getParam() = undefined', () =>
+    assertEqual(new BlockN('N1').getParam('R'), undefined)
+);
+assert('BlockR: setParam() aktualisiert Rohwert', () => {
+    const c = document.createElement('div'); const b = new BlockR('R1'); b.render(c);
+    b.setParam('R', 220); assertEqual(b.getParam('R'), 220);
+});
+assert('BlockR: setParam() aktualisiert DOM mit format()', () => {
+    const c = document.createElement('div'); const b = new BlockR('R1'); b.render(c);
+    b.setParam('R', 470);
+    assertEqual(c.querySelector('[data-key="R"]').textContent, 'R: 470 Ω');
+});
+assert('BlockS: setParam("voc") aktualisiert DOM', () => {
+    const c = document.createElement('div'); const b = new BlockS('S1'); b.render(c);
+    b.setParam('voc', 52);
+    assertEqual(c.querySelector('[data-key="voc"]').textContent, 'voc: 52 V');
+});
+assert('BlockR: setParam() feuert sb-param-change', () => {
+    const c = document.createElement('div'); const b = new BlockR('R1'); b.render(c);
+    let key, val;
+    c.addEventListener('sb-param-change', e => { key=e.detail.key; val=e.detail.value; });
+    b.setParam('R', 330); assertEqual(key, 'R'); assertEqual(val, 330);
+});
+assert('BlockC: setParam() feuert sb-param-change', () => {
+    const c = document.createElement('div'); const b = new BlockC('C1'); b.render(c);
+    let fired = false;
+    c.addEventListener('sb-param-change', () => fired = true);
+    b.setParam('C', 47); assertEqual(fired, true);
+});
+assert('setParam() unbekannter key: keine Änderung', () => {
+    const c = document.createElement('div'); const b = new BlockR('R1'); b.render(c);
+    b.setParam('X', 999); assertEqual(b.getParam('R'), 100);
+});
+assert('setParam() ohne render(): Rohwert trotzdem aktualisiert', () => {
+    const b = new BlockR('R1');
+    b.setParam('R', 220); assertEqual(b.getParam('R'), 220);
+});
+
+// ── Tests: textLayout ────────────────────────────────────────────────────────
+assert('BlockR: _textLayout = lr', () => assertEqual(new BlockR('R1')._textLayout, 'lr'));
+assert('BlockC: _textLayout = tb', () => assertEqual(new BlockC('C1')._textLayout, 'tb'));
+assert('BlockS: _textLayout = lr', () => assertEqual(new BlockS('S1')._textLayout, 'lr'));
+
+// ── Tests: Params in sb-text1, nicht sb-text2 ────────────────────────────────
+assert('BlockR: sb-text2 enthält keine sb-property', () => {
+    const c = document.createElement('div'); new BlockR('R1').render(c);
+    assertEqual(c.querySelectorAll('.sb-text2 .sb-property').length, 0);
+});
+assert('BlockS: sb-text2 enthält keine sb-property', () => {
+    const c = document.createElement('div'); new BlockS('S1').render(c);
+    assertEqual(c.querySelectorAll('.sb-text2 .sb-property').length, 0);
+});
+
+// ── Ergebnisse rendern ───────────────────────────────────────────────────────
+const rDiv = document.getElementById('results');
+results.forEach(r => {
+    const row = document.createElement('div'); row.className = 'test-result';
+    const b = document.createElement('span'); b.className=`badge ${r.ok?'pass':'fail'}`; b.textContent=r.ok?'PASS':'FAIL';
+    const t = document.createElement('span'); t.textContent=r.desc+(r.err?' — '+r.err:'');
+    row.appendChild(b); row.appendChild(t); rDiv.appendChild(row);
+});
+const passed = results.filter(r=>r.ok).length;
+const sum = document.createElement('div'); sum.className='summary';
+sum.style.color = passed===results.length ? '#155724' : '#721c24';
+sum.textContent = `${passed} / ${results.length} Tests bestanden`;
+rDiv.appendChild(sum);
+
+// ── Hilfsfunktionen ──────────────────────────────────────────────────────────
+function drawCrosshair(el, x, y) {
+    const ch = document.createElement('div'); ch.className = 'sb-crosshair';
+    ch.style.left = x+'px'; ch.style.top = y+'px';
+    const lbl = document.createElement('span'); lbl.className='sb-crosshair-label';
+    lbl.textContent = `(${x},${y})`; ch.appendChild(lbl); el.appendChild(ch);
+}
+const log = document.getElementById('event-log');
+function logEv(msg) {
+    if (log.textContent.includes('noch keine')) log.textContent = '';
+    const d = document.createElement('div'); d.textContent=msg; log.insertBefore(d,log.firstChild);
+}
+document.body.addEventListener('sb-param-change', e => logEv(`sb-param-change: ${e.detail.key} = ${e.detail.value}`));
+document.body.addEventListener('sb-select',       e => logEv(`sb-select: ${e.detail.block.constructor.name}`));
+document.body.addEventListener('sb-rotate',       e => logEv(`sb-rotate: ${e.detail.block.constructor.name} → ${e.detail.rotation}°`));
+
+// ── Demo 1: wenig Params, lr ──────────────────────────────────────────────────
+const s1 = document.getElementById('s1');
+[
+    { cls: BlockR, label: 'R1', x: 130, y: 90  },
+    { cls: BlockR, label: 'R2', x: 380, y: 90  },
+    { cls: BlockN, label: 'N1', x: 600, y: 90  },
+    { cls: BlockR, label: 'R3', x: 130, y: 220 },
+    { cls: BlockC, label: 'C1', x: 380, y: 180 },
+    { cls: BlockN, label: 'N2', x: 600, y: 220 },
+].forEach(({cls, label, x, y}) => {
+    drawCrosshair(s1, x, y);
+    new cls(label, { x, y }).render(s1);
+});
+
+// ── Demo 2: viele Params + tb ──────────────────────────────────────────────
+const s2 = document.getElementById('s2');
+[
+    { cls: BlockS, label: 'Solar1', x: 140, y: 140 },
+    { cls: BlockS, label: 'Solar2', x: 380, y: 140 },
+    { cls: BlockC, label: 'C2',     x: 600, y: 140 },
+].forEach(({cls, label, x, y}) => {
+    drawCrosshair(s2, x, y);
+    new cls(label, { x, y }).render(s2);
+});
+</script>
+</body>
+</html>
