@@ -1,0 +1,19 @@
+/*
+signalBlock.css — Connector-Stile für signalBlock
+Einbinden via: <link rel="stylesheet" href="signalBlock.css">
+
+Ergänzt schematicBlock.css um flow-spezifische Connector-Darstellung.
+*/
+
+/* Signal-Eingang: ausgefüllter Kreis, dunkellila */
+.sb-connector--signal-in {
+    background-color: #5b2d8e;
+    box-shadow: 0 0 0 1px #8b4db0;
+}
+
+/* Signal-Ausgang: hohler Ring, helleres Lila */
+.sb-connector--signal-out {
+    background-color: transparent;
+    box-shadow: 0 0 0 1px #c084fc;
+    border-color: #c084fc;
+}
