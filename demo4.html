@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Lastfluss Demo4 — MPPT</title>
+<link rel="stylesheet" href="/schematic/schematicBlock/schematicBlock.css">
+  <link rel="stylesheet" href="/schematic/demo.css">
+</head>
+<body>
+
+<h1>Lastfluss Demo4 — Solarpanel mit MPPT</h1>
+<p class="subtitle">
+  Knoten1: MPPT1 + DCDC.in &nbsp;|&nbsp;
+  Knoten2: MPPT2 + Last + DCDC.out &nbsp;|&nbsp;
+  Beide Panels mit internem MPPT-Tracker (konstante Leistung im Spannungsfenster)
+</p>
+
+<div id="schematic"></div>
+<div id="log"></div>
+
+<script src="/schematic/schematicBlock/schematicBlock.js"></script>
+<script src="/schematic/labeledBlock/labeledBlock.js"></script>
+<script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
+<script src="/schematic/simulator/baseSim.js"></script>
+<script src="/schematic/simulator/lastflussSim.js"></script>
+<script src="/schematic/lastflussBlock/solarPanelMPPT.js"></script>
+<script src="/schematic/lastflussBlock/last.js"></script>
+<script src="/schematic/lastflussBlock/dcdc.js"></script>
+
+<script type="module">
+
+const logEl = document.getElementById('log');
+function log(msg, cls = '') {
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = msg;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── Instanzen ────────────────────────────────────────────────────────────────
+//
+//   Knoten1 (hohe Seite):    MPPT1 + DCDC.in    U1 ∈ [20, 40V]
+//   Knoten2 (niedrige Seite): MPPT2 + Last + DCDC.out  U2 ∈ [20, 40V]
+//
+//   Layout:
+//
+//   [MPPT1]        [DCDC]        [MPPT2]
+//      |              |in             |
+//      └──── k1 ──────┘       k2 ────┘
+//                             |out
+//                           [Last]
+//
+const mppt1 = new SolarPanelMPPT('MPPT1', { pNom: 300, uMin: 20, uMax: 40, x:  90, y:  70 });
+const dcdc  = new DCDC('DCDC1', { vNomIn: 35, vNomOut: 29.2, eta: 0.95, pNom: 300, couplingImpedance: 1.5, x:  90, y: 210, });
+const last1 = new Last('Last1', { pNom: 450, uMin: 20, uMax: 40, x:  90, y: 350 });
+const mppt2 = new SolarPanelMPPT('MPPT2', { pNom: 300, uMin: 20, uMax: 40, x: 530, y:  70 });
+
+// ── Layout ───────────────────────────────────────────────────────────────────
+const schematic = document.getElementById('schematic');
+
+mppt1.render(schematic);
+dcdc.render(schematic);
+last1.render(schematic);
+mppt2.render(schematic);
+
+// ── Routing ──────────────────────────────────────────────────────────────────
+requestAnimationFrame(() => {
+
+  const connectors = [
+    ...mppt1.getConnectorPositions(schematic, 'mppt1'),
+    ...dcdc.getConnectorPositions(schematic,  'dcdc'),
+    ...mppt2.getConnectorPositions(schematic, 'mppt2'),
+    ...last1.getConnectorPositions(schematic, 'last1'),
+  ];
+
+  const connections = [
+    { id: 'net-k1',      from: 'mppt1.out', to: 'dcdc.in'  },
+    { id: 'net-k2-mppt', from: 'mppt2.out', to: 'last1.in' },
+    { id: 'net-k2-dcdc', from: 'dcdc.out',  to: 'last1.in' },
+  ];
+
+  const blocked = [mppt1, dcdc, mppt2, last1].map(b => b.getImageDiv());
+
+  try {
+    const wire = new ElectricalWire(schematic, {
+      gridSize: 10, wireColor: '#7ecfff', wireWidth: 1.5, logging: false,
+    });
+    wire.setConnectors(connectors);
+    wire.setConnections(connections);
+    wire.setBlockedAreas(blocked, { shrink: 5 });
+    wire.render();
+    log('Routing OK');
+  } catch(e) {
+    log('Routing Fehler: ' + e.message, 'err');
+    console.error(e);
+    return;
+  }
+
+  // ── Simulation ──────────────────────────────────────────────────────────
+  const sim = new lastflussSim([
+    { id: 'k1', blocks: [mppt1, dcdc] },
+    { id: 'k2', blocks: [mppt2, last1, dcdc] },
+  ], { logging: true, epsilon: 15 });
+
+  const result = sim.solve();
+
+  if (result.converged) {
+    const u1  = result.voltages.get('k1').toFixed(2);
+    const u2  = result.voltages.get('k2').toFixed(2);
+    const pm1 = result.powers.get(mppt1)?.out?.toFixed(1) ?? '?';
+    const pm2 = result.powers.get(mppt2)?.out?.toFixed(1) ?? '?';
+    const pl  = result.powers.get(last1)?.in?.toFixed(1)  ?? '?';
+    const pd  = result.powers.get(dcdc)?.out?.toFixed(1)  ?? '?';
+    log(`Simulation OK (${result.iterations} Iter): U1=${u1}V U2=${u2}V | ` +
+        `MPPT1=${pm1}W MPPT2=${pm2}W Last=${pl}W DCDC.out=${pd}W`);
+  } else {
+    log('Simulation nicht konvergiert!', 'warn');
+  }
+});
+
+</script>
+</body>
+</html>
