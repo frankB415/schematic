@@ -1,79 +1,6 @@
 /*
 trafoGleichrichter.js — Transformator + Gleichrichter (Dioden-Brücke)
 Ableitung von lastflussKomplexBlock
-
-═══════════════════════════════════════════════════════════════════
-MODELL-ÜBERSICHT
-═══════════════════════════════════════════════════════════════════
-
-Topologie:
-  k1 (AC, komplex) ──[Trafo]──[Gleichrichter]── k_dc (DC, reell)
-
-Der Block meldet dem Simulator einen versteckten Knoten k_u2 (AC, 230V-Seite).
-Der Simulator legt diesen Knoten automatisch an — der Benutzer deklariert
-ihn nicht explizit in der Demo.
-
-  k1 ──[Trafo-Teil]── k_u2 (intern) ──[Gleichrichter-Teil]── k_dc
-
-Vorteil gegenüber blockinterner φ-Iteration:
-  - u2 ist ein echter Solver-Knoten
-  - Keine blockinterne φ-Iteration nötig
-  - Newton-Solver übernimmt die vollständige Konvergenz
-  - Saubere Jacobian-Matrix
-
-═══════════════════════════════════════════════════════════════════
-TRAFO-TEIL (Connector 'in' → versteckter Knoten k_u2)
-═══════════════════════════════════════════════════════════════════
-
-  ue      = u1Nenn / u2Nenn
-  zTrafo  = (u2Nenn² / sNenn) · ((1-eta) + j·uk)   [Strang-Impedanz]
-  u2LL    = u1 / ue                                  [Leerlauf-Sekundärspannung]
-  i2      = (u1/ue - u2) / (√3 · zTrafo)
-  i1      = i2 / ue
-  p1      = -√3 · u1 · i1*                           [Verbrauch k1]
-  p_u2    = +√3 · u2 · i2*                           [Einspeisung k_u2]
-
-═══════════════════════════════════════════════════════════════════
-GLEICHRICHTER-TEIL (versteckter Knoten k_u2 → Connector 'out')
-═══════════════════════════════════════════════════════════════════
-
-  vDc0  = |u2| · 1.35              Leerlauf-DC-Spannung (B6-Faktor)
-  r_int = 0.003 · vDc0Nenn² / pNom Innenwiderstand (0.3% bei Nennlast)
-  i_dc  = max(0, (vDc0-vDc)/r_int) DC-Strom aus linearer Kennlinie
-  P_dc  = U_dc · i_dc · eta        DC-Ausgangsleistung
-  P_ac  = P_dc / eta               AC-Verbrauch (cos φ = 1 → nur Wirkleistung)
-  Q_ac  = 0                        keine Blindleistung (Gleichrichter)
-
-═══════════════════════════════════════════════════════════════════
-STROM-TRANSFORMATION B6
-═══════════════════════════════════════════════════════════════════
-
-  I_AC_eff = i_DC · √(2/3) ≈ i_DC · 0.816   Effektivwert
-  I_AC_1   = i_DC · √6/π  ≈ i_DC · 0.780   Grundschwingung (für Lastfluss)
-
-Falsch wäre i_DC/√3 — gilt nur für reinen Sinusstrom.
-
-═══════════════════════════════════════════════════════════════════
-VORZEICHEN-KONVENTION
-═══════════════════════════════════════════════════════════════════
-
-  p1.re    < 0  — Verbrauch an k1
-  p_u2_trafo > 0  — Einspeisung an k_u2 (Trafo-Teil)
-  p_u2_rect  < 0  — Verbrauch an k_u2 (Gleichrichter-Teil)
-  P_dc     > 0  — Einspeisung in k_dc
-  u1, u2: L-L-Spannungen (komplex), i1, i2: Strangströme
-
-Connectoren:
-  in  — oben mittig   (AC-Primärseite, Knoten k1, komplex)
-  out — unten mittig  (DC-Ausgang,     Knoten k_dc, reell)
-
-Parameter:
-  u1Nenn  — Primärspannung Nenn L-L in V    (default: 400)
-  u2Nenn  — Sekundärspannung Nenn L-L in V  (default: 230)
-  sNenn   — Nennleistung in VA              (default: 100e3)
-  ukPct   — Kurzschlussspannung in %        (default: 4)
-  eta     — Wirkungsgrad 0..1               (default: 0.98)
-  pNom    — Nennleistung DC in W            (default: sNenn·0.98)
 */
 
 const TRAFOGLEICHRICHTER_SVG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
@@ -91,10 +18,10 @@ const TRAFOGLEICHRICHTER_SVG = 'data:image/svg+xml;charset=utf-8,' + encodeURICo
 
 class TrafoGleichrichter extends lastflussKomplexBlock {
 
-    constructor(label, { u1Nenn = 400, u2Nenn = 230, sNenn = 100e3, ukPct = 4, eta = 0.98, pNom = null, x = null, y = null } = {}) {
+    constructor(label, { u1Nenn = 400, u2Nenn = 230, sNenn = 100e3, uk = 4, eta = 0.993, etaBruecke = 0.997, pNom = null, x = null, y = null } = {}) {
         super({ x, y, imageW: 60, imageH: 100, imageSrc: TRAFOGLEICHRICHTER_SVG });
         this._label = label;
-        this._pNom  = pNom ?? sNenn * 0.98;   // DC-Nennleistung für Gleichrichter-Kennlinie
+        this._pNom  = pNom ?? sNenn * 0.98;
 
         this.connectors = [
             { name: 'in',  x: '50%', y: '0%',   type: 'electrical', direction: 'up',   minLength: 24 },
@@ -102,50 +29,38 @@ class TrafoGleichrichter extends lastflussKomplexBlock {
         ];
 
         this.params = [
-            { key: 'u1Nenn', label: 'U1 Nenn', value: u1Nenn, format: v => `${(v/1000).toFixed(3)} kV`  },
-            { key: 'u2Nenn', label: 'U2 Nenn', value: u2Nenn, format: v => `${(v/1000).toFixed(3)} kV`  },
-            { key: 'sNenn',  label: 'S Nenn',  value: sNenn,  format: v => `${(v/1e3).toFixed(0)} kVA`  },
-            { key: 'ukPct',  label: 'uk',       value: ukPct,  format: v => `${v} %`                     },
-            { key: 'eta',    label: 'η',         value: eta,    format: v => `${(v*100).toFixed(1)} %`    },
+            { key: 'u1Nenn',    label: 'u1Nenn',    value: u1Nenn,    format: v => `${(v/1000).toFixed(1)} kV`  },
+            { key: 'u2Nenn',    label: 'u2Nenn',    value: u2Nenn,    format: v => `${(v/1000).toFixed(1)} kV`  },
+            { key: 'sNenn',     label: 'sNenn',     value: sNenn,     format: v => `${(v/1e3).toFixed(0)} kVA`  },
+            { key: 'uk',        label: 'uk',        value: uk,        format: v => `${v} %`                     },
+            { key: 'eta',       label: 'etaTrafo',  value: eta,       format: v => `${(v*100).toFixed(1)} %`    },
+            { key: 'etaBruecke',label: 'etaBruecke',value: etaBruecke,format: v => `${(v*100).toFixed(2)} %`   },
         ];
     }
 
-    // ── Versteckter Knoten ────────────────────────────────────────────────────
-
-    /**
-     * Meldet dem Simulator den versteckten AC-Knoten k_u2 (Trafo-Sekundärseite).
-     * Der Simulator legt diesen Knoten automatisch an.
-     * Connector-Zuordnung: dieser Block hängt mit BEIDEN internen Teilmodellen
-     * an k_u2 — einmal als Lieferant (Trafo) und einmal als Verbraucher (Gleichrichter).
-     */
     getHiddenNodes() {
         const u2Nenn = this.getParam('u2Nenn');
         return [{
-            id:           this._uid + '.u2',      // eindeutig durch Block-Label
-            type:         'ac',                   // Sekundärspannung ist AC
-            connectorName: 'u2',                  // interner Connector-Name
-            blocks:       [this],                 // dieser Block verwaltet beide Seiten
-            uMin:   u2Nenn * 0.85,               // Scan nahe Nennspannung (Belastung ~15%)
-            uMax:   u2Nenn * 1.05,               // Leerlauf leicht über Nenn
+            id:           this._uid + '.u2',
+            type:         'ac',
+            connectorName: 'u2',
+            blocks:       [this],
+            uMin:   u2Nenn * 0.85,
+            uMax:   u2Nenn * 1.05,
         }];
     }
 
-    /** Block-UID für eindeutige Knoten-IDs — basiert auf Label */
     get _uid() {
         if (!this.__uid) this.__uid = this._label.replace(/[^a-zA-Z0-9]/g, '_');
         return this.__uid;
     }
 
-    // ── Trafo-Impedanz ────────────────────────────────────────────────────────
-
     _zTrafo() {
         const zBase = this.getParam('u2Nenn') ** 2 / this.getParam('sNenn');
-        const uk    = this.getParam('ukPct') / 100;
+        const uk    = this.getParam('uk') / 100;
         const eta   = this.getParam('eta');
         return { re: zBase * (1 - eta), im: zBase * uk };
     }
-
-    // ── Berechnung ────────────────────────────────────────────────────────────
 
     _calc(voltages) {
         const u1  = toC(voltages.in  ?? { re: this.getParam('u1Nenn'), im: 0 });
@@ -153,8 +68,6 @@ class TrafoGleichrichter extends lastflussKomplexBlock {
             ? voltages.out
             : (voltages.out ? cAbs(voltages.out) : this.getParam('u2Nenn') * 1.35);
 
-        // u2 vom versteckten Knoten — Simulator liefert es unter connectorName 'u2'
-        // hiddenId als Fallback für direkten Zugriff
         const hiddenId = this._uid + '.u2';
         const u2raw = voltages['u2'] ?? voltages[hiddenId];
         const u2 = u2raw
@@ -166,76 +79,85 @@ class TrafoGleichrichter extends lastflussKomplexBlock {
         const sqrt3  = Math.sqrt(3);
 
         // ── Trafo-Teil ───────────────────────────────────────────────────────
-        const u2LL = cScale(u1, 1 / ue);                      // Leerlauf-Sekundärspannung
+        const u2LL = cScale(u1, 1 / ue);
         const i2   = cDiv(cSub(u2LL, u2), cScale(zTrafo, sqrt3));
         const i1   = cScale(i2, 1 / ue);
-        const p1   = cScale(cMul(u1,  cConj(i1)), -sqrt3);    // Verbrauch k1
-        const p_u2_trafo = cScale(cMul(u2, cConj(i2)), sqrt3); // Einspeisung k_u2
+        const p1   = cScale(cMul(u1,  cConj(i1)), -sqrt3);
+        const p_u2_trafo = cScale(cMul(u2, cConj(i2)), sqrt3);
 
         // ── Gleichrichter-Teil ───────────────────────────────────────────────
         const u2Abs  = cAbs(u2);
-        const vDc0   = u2Abs * 1.35;               // Leerlauf-DC-Spannung: U_dc0 = |u2| · 1.35
-        const vDcPos = Math.max(0, vDc);            // DC-Spannung nicht negativ
+        const vDc0   = u2Abs * 1.35;
+        const vDcPos = Math.max(0, vDc);
 
-        // Innenwiderstand: 0.3% bei Nennlast
-        const vDc0Nenn = this.getParam('u2Nenn') * 1.35;
-        const r_int    = 0.003 * vDc0Nenn * vDc0Nenn / this._pNom;
+        const etaBruecke = this.getParam('etaBruecke');
+        const vDc0Nenn   = this.getParam('u2Nenn') * 1.35;
+        const r_int      = (1 - etaBruecke) * vDc0Nenn * vDc0Nenn / this._pNom;
 
-        // DC-Strom aus linearer Gleichrichter-Kennlinie
         const i_dc   = Math.max(0, (vDc0 - vDcPos) / r_int);
 
-        // DC-Leistung: P_dc = U_dc · I_dc
-        const pDc    = vDcPos * i_dc;
+        const pDc        = vDcPos * i_dc;
+        const pVerlustR  = r_int * i_dc * i_dc;
 
-        // AC-Verbrauch: cos φ = 1 → nur Wirkleistung, Blindleistung = 0
-        // P_ac = P_dc  (Verluste stecken im Trafo-Widerstand, eta separat)
-        const pAcAbs    = pDc;
-        const p_u2_rect = { re: -pAcAbs, im: 0 };  // Verbrauch an k_u2
+        // Mindest-Querlast: hält den Jacobian regulär wenn die Diode sperrt.
+        // G_MIN = 1e-6 S → bei u2=600V nur ~0.36 W — physikalisch vernachlässigbar.
+        const G_MIN      = 1e-6;
+        const pAcAbs     = pDc + pVerlustR + G_MIN * u2Abs * u2Abs;
+        const p_u2_rect  = { re: -pAcAbs, im: 0 };
 
         return { u1, u2, u2Abs, vDc, vDcPos, vDc0, i1, i2, i_dc,
-                 p1, p_u2_trafo, p_u2_rect, pDc, hiddenId };
+                 p1, p_u2_trafo, p_u2_rect, pDc, pVerlustR, hiddenId };
     }
 
-    // ── calcPower ─────────────────────────────────────────────────────────────
+    calcCurrent(voltages) {
+        const { u1, u2, i1, i2, i_dc, p_u2_rect, hiddenId } = this._calc(voltages);
 
-    calcPower(voltages) {
-        const { p1, p_u2_trafo, p_u2_rect, pDc, hiddenId } = this._calc(voltages);
+        // Strom an Knoten in (AC-Primaerseite):
+        //   i1 fliesst aus Quelle in Knoten → aber Trafo zieht Strom aus Knoten
+        //   → Entnahme: negativ. i1 ist bereits "Strom durch Trafo von k_ac2 aus"
+        const iIn = { re: -i1.re, im: -i1.im };
 
-        const result = {
-            in:  p1,    // komplex → k1
-            out: pDc,   // reell   → k_dc
+        // DC-Ausgangsknoten: i_dc fliesst in Knoten ein → positiv
+        const iOut = i_dc;
+
+        // Versteckter AC-Knoten u2 (Sekundaerseite):
+        //   i2 fliesst von u2 durch Gleichrichter → Entnahme aus u2
+        //   p_u2_rect modelliert den Gleichrichter als Leitwert
+        //   Strom = i2 (Trafo speist ein) + Gleichrichterstrom (entnimmt)
+        const u2abs = Math.max(1, Math.sqrt(u2.re**2 + u2.im**2));
+        // Gleichrichter-Entnahmestrom am u2-Knoten (Einleiterschema):
+        // S = sqrt(3) * U_LL * I* → I = S* / (sqrt(3) * U*)
+        // p_u2_rect = {re: -pAcAbs, im: 0} (reelle Entnahme)
+        // I_rect = p_u2_rect / (sqrt(3) * u2abs)  (Vorzeichen: Entnahme negativ)
+        const sqrt3 = Math.sqrt(3);
+        const iRect = { re: p_u2_rect.re / (sqrt3 * u2abs), im: p_u2_rect.im / (sqrt3 * u2abs) };
+        const iU2 = {
+            re: i2.re + iRect.re,
+            im: i2.im + iRect.im,
         };
 
-        // Nettobeitrag an k_u2: Trafo speist ein, Gleichrichter verbraucht
-        // Schlüssel = connectorName ('u2') damit _buildConnectorMap ihn findet
-        result['u2'] = {
-            re: p_u2_trafo.re + p_u2_rect.re,
-            im: p_u2_trafo.im + p_u2_rect.im,
-        };
-
+        const result = { in: iIn, out: iOut };
+        result[hiddenId] = iU2;
         return result;
     }
 
-    // ── Arbeitspunkt-Anzeige ─────────────────────────────────────────────────
+    calcPower(voltages) {
+        throw new Error('TrafoGleichrichter.calcPower() ist nicht mehr unterstuetzt — calcCurrent() verwenden.');
+    }
 
     applyOperatingPoint(voltages) {
-        const { u1, u2, u2Abs, vDc, vDc0, i_dc, p1, p_u2_trafo, pDc } = this._calc(voltages);
-
-        this._resultFormats = {
-            u1:   v => `U1: ${lastflussKomplexBlock.fmtPhasor(v)}`,
-            u2:   v => `U2: ${lastflussKomplexBlock.fmtPhasor(v)}`,
-            s1:   v => `S1: ${lastflussKomplexBlock.fmtPower({ re: -v.re, im: -v.im })}`,
-            s2:   v => `S2: ${lastflussKomplexBlock.fmtPower(v)}`,
-            vDc0: v => `vDc0: ${v.toFixed(1)} V`,
-            vDc:  v => `vDc: ${v.toFixed(1)} V`,
-            pDc:  v => `P_dc: ${(v/1e3).toFixed(2)} kW`,
-            iDc:  v => `I_dc: ${v.toFixed(1)} A`,
-            state: v => `Diode: ${v}`,
-        };
-        this._setResults({
-            u1, u2, s1: p1, s2: p_u2_trafo, vDc0, vDc, pDc, iDc: i_dc,
-            state: pDc <= 0 ? 'gesperrt' : 'leitend',
-        });
+        const { u1, u2, vDc, vDc0, i_dc, p1, p_u2_trafo, pDc } = this._calc(voltages);
+        this.renderResults([
+            { key: 'u1',   text: `U1: ${lastflussKomplexBlock.fmtPhasor(u1)}` },
+            { key: 'u2',   text: `U2: ${lastflussKomplexBlock.fmtPhasor(u2)}` },
+            { key: 's1',   text: `S1: ${lastflussKomplexBlock.fmtPower({ re: -p1.re, im: -p1.im })}` },
+            { key: 's2',   text: `S2: ${lastflussKomplexBlock.fmtPower(p_u2_trafo)}` },
+            { key: 'vDc0', text: `vDc0: ${vDc0.toFixed(1)} V` },
+            { key: 'vDc',  text: `vDc: ${vDc.toFixed(1)} V` },
+            { key: 'pDc',  text: `P_dc: ${(pDc/1e3).toFixed(1)} kW` },
+            { key: 'iDc',  text: `I_dc: ${i_dc.toFixed(1)} A` },
+            { key: 'state',text: `Diode: ${pDc <= 0 ? 'gesperrt' : 'leitend'}` },
+        ]);
     }
 }
 
