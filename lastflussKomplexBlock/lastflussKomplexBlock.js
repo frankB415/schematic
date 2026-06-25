@@ -29,10 +29,9 @@ SCHNITTSTELLE
 ═══════════════════════════════════════════════════════════════════
 
 Unterschied zu lastflussBlock:
-  - calcPower(voltages) arbeitet mit komplexen Spannungen { re, im }
-  - Rückgabe: { connectorName: { re, im } }  (Scheinleistung in VA)
-  - Vorzeichen: re>0 = Einspeisung, re<0 = Verbrauch
-                im<0 = induktiv,    im>0 = kapazitiv
+  - calcCurrent(voltages) arbeitet mit komplexen Spannungen { re, im }
+  - Rueckgabe: { connectorName: {re, im} }  (Strangstrom in A)
+  - Vorzeichen: Einspeisung in Knoten positiv, Entnahme negativ
 
 Komplexe Hilfsfunktionen als Modulvariablen verfügbar für alle Blöcke:
   cAdd, cSub, cMul, cDiv, cConj, cAbs, cArg, cScale, toC  (aus dieser Datei)
@@ -79,12 +78,22 @@ class lastflussKomplexBlock extends lastflussBlock {
     // ── Abstrakt ──────────────────────────────────────────────────────────────
 
     /**
-     * Leistungsbeitrag bei gegebenen komplexen Knotenspannungen.
+     * Strombeitrag bei gegebenen komplexen Knotenspannungen.
+     * Positiv = Einspeisung in Knoten, negativ = Entnahme.
+     * Rueckgabe: Strangstrom {re, im} in A (Einleiterschema).
      * @param {{ connectorName: {re, im} }} voltages — Phasoren in V (L-L)
-     * @returns {{ connectorName: {re, im} }}         — Scheinleistung in VA
+     * @returns {{ connectorName: {re, im} }}         — Strangstrom in A
+     */
+    calcCurrent(voltages) {
+        throw new Error(`${this.constructor.name}.calcCurrent() muss implementiert werden.`);
+    }
+
+    /**
+     * calcPower() wurde durch calcCurrent() ersetzt.
+     * Dieser Aufruf wirft immer einen Fehler.
      */
     calcPower(voltages) {
-        throw new Error(`${this.constructor.name}.calcPower() muss implementiert werden.`);
+        throw new Error(`${this.constructor.name}.calcPower() ist nicht mehr unterstuetzt — calcCurrent() verwenden.`);
     }
 
     // ── Hilfsfunktionen ───────────────────────────────────────────────────────
