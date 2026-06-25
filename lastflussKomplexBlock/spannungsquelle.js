@@ -69,19 +69,23 @@ class Spannungsquelle extends lastflussKomplexBlock {
         return { u2, i2, p2 };
     }
 
+    calcCurrent(voltages) {
+        const { i2 } = this._calc(voltages);
+        // i2 fliesst aus Quelle in den Knoten → Einspeisung → positiv
+        return { out: i2 };
+    }
+
     calcPower(voltages) {
-        const { p2 } = this._calc(voltages);
-        return { out: p2 };
+        throw new Error('Spannungsquelle.calcPower() ist nicht mehr unterstuetzt — calcCurrent() verwenden.');
     }
 
     applyOperatingPoint(voltages) {
         const { u2, i2, p2 } = this._calc(voltages);
-        this._resultFormats = {
-            u2:   v => `U: ${lastflussKomplexBlock.fmtPhasor(v)}`,
-            p2:   v => `S: ${lastflussKomplexBlock.fmtPower(v)}`,
-            iAbs: v => `I: ${v.toFixed(1)} A`,
-        };
-        this._setResults({ u2, p2, iAbs: cAbs(i2) });
+        this.renderResults([
+            { key: 'u2',   text: `U: ${lastflussKomplexBlock.fmtPhasor(u2)}` },
+            { key: 'p2',   text: `S: ${lastflussKomplexBlock.fmtPower(p2)}` },
+            { key: 'iAbs', text: `I: ${cAbs(i2).toFixed(1)} A` },
+        ]);
     }
 }
 
