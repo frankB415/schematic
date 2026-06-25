@@ -19,23 +19,26 @@ Parameter:
   u1Nenn — Primärspannung Nenn L-L in V    (default: 400)
   u2Nenn — Sekundärspannung Nenn L-L in V  (default: 230)
   sNenn  — Nennleistung in VA              (default: 100e3)
-  ukPct  — Kurzschlussspannung in %        (default: 4)
+  uk  — Kurzschlussspannung in %        (default: 4)
   eta    — Wirkungsgrad 0..1               (default: 0.98)
 */
 
 const TRAFO_SVG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
 `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 80">
-  <rect x="4" y="4" width="52" height="72" rx="4" fill="#1a1a2e" stroke="#a0c0ff" stroke-width="1.5"/>
-  <circle cx="30" cy="26" r="10" fill="none" stroke="#a0c0ff" stroke-width="1.5"/>
-  <circle cx="30" cy="54" r="10" fill="none" stroke="#a0c0ff" stroke-width="1.5"/>
-  <line x1="24" y1="36" x2="24" y2="44" stroke="#a0c0ff" stroke-width="1"/>
-  <line x1="36" y1="36" x2="36" y2="44" stroke="#a0c0ff" stroke-width="1"/>
-  <text x="30" y="72" text-anchor="middle" fill="#a0c0ff" font-size="6" font-family="monospace">TR</text>
+  <!-- Hintergrund -->
+  <rect x="0" y="0" width="60" height="80" rx="4" fill="#1a1a2e" stroke="#a0c0ff" stroke-width="1.5"/>
+  <!-- Anschlusslinien -->
+  <line x1="30" y1="0"  x2="30" y2="18" stroke="#a0c0ff" stroke-width="2"/>
+  <line x1="30" y1="62" x2="30" y2="80" stroke="#a0c0ff" stroke-width="2"/>
+  <!-- Oberer Kreis (Primär) -->
+  <circle cx="30" cy="30" r="12" fill="none" stroke="#a0c0ff" stroke-width="2"/>
+  <!-- Unterer Kreis (Sekundär) -->
+  <circle cx="30" cy="50" r="12" fill="none" stroke="#a0c0ff" stroke-width="2"/>
 </svg>`);
 
 class Trafo extends lastflussKomplexBlock {
 
-    constructor(label, { u1Nenn = 400, u2Nenn = 230, sNenn = 100e3, ukPct = 4, eta = 0.98, x = null, y = null } = {}) {
+    constructor(label, { u1Nenn = 400, u2Nenn = 230, sNenn = 100e3, uk = 4, eta = 0.98, x = null, y = null } = {}) {
         super({ x, y, imageW: 60, imageH: 80, imageSrc: TRAFO_SVG });
         this._label = label;
 
@@ -48,7 +51,7 @@ class Trafo extends lastflussKomplexBlock {
             { key: 'u1Nenn', label: 'U1 Nenn', value: u1Nenn, format: v => `${(v/1000).toFixed(3)} kV`        },
             { key: 'u2Nenn', label: 'U2 Nenn', value: u2Nenn, format: v => `${(v/1000).toFixed(3)} kV`        },
             { key: 'sNenn',  label: 'S Nenn',  value: sNenn,  format: v => `${(v/1e3).toFixed(0)} kVA`        },
-            { key: 'ukPct',  label: 'uk',      value: ukPct,  format: v => `${v} %`                           },
+            { key: 'uk',  label: 'uk',      value: uk,  format: v => `${v} %`                           },
             { key: 'eta',    label: 'η',        value: eta,    format: v => `${(v*100).toFixed(1)} %`          },
         ];
     }
@@ -59,7 +62,7 @@ class Trafo extends lastflussKomplexBlock {
         const u2    = toC(voltages.out ?? { re: this.getParam('u2Nenn'), im: 0 });
         const ue    = this.getParam('u1Nenn') / this.getParam('u2Nenn');
         const zBase = this.getParam('u2Nenn') ** 2 / this.getParam('sNenn');
-        const uk    = this.getParam('ukPct') / 100;
+        const uk    = this.getParam('uk') / 100;
         const eta   = this.getParam('eta');
 
         // zTrafo = (u2Nom² / sNom) · (j·uk + (1-eta))
@@ -90,15 +93,16 @@ class Trafo extends lastflussKomplexBlock {
 
     applyOperatingPoint(voltages) {
         const { u1, u2, i2, p1, p2 } = this._calc(voltages);
-        this._resultFormats = {
-            u1:   v => `U1: ${lastflussKomplexBlock.fmtPhasor(v)}`,
-            u2:   v => `U2: ${lastflussKomplexBlock.fmtPhasor(v)}`,
-            p1:   v => `S1: ${lastflussKomplexBlock.fmtPower({ re: -v.re, im: -v.im })}`,  // Eingang: positiv = Leistungsfluss rein
-            p2:   v => `S2: ${lastflussKomplexBlock.fmtPower(v)}`,                          // Ausgang: positiv = Leistungsfluss raus
-            iAbs: v => `I2: ${v.toFixed(1)} A`,
-        };
-        this._setResults({ u1, u2, p1, p2, iAbs: cAbs(i2) });
+        this.renderResults([
+            { key: 'u1',   text: `U1: ${lastflussKomplexBlock.fmtPhasor(u1)}` },
+            { key: 'u2',   text: `U2: ${lastflussKomplexBlock.fmtPhasor(u2)}` },
+            { key: 'p1',   text: `S1: ${lastflussKomplexBlock.fmtPower({ re: -p1.re, im: -p1.im })}` },
+            { key: 'p2',   text: `S2: ${lastflussKomplexBlock.fmtPower(p2)}` },
+            { key: 'iAbs', text: `I2: ${cAbs(i2).toFixed(1)} A` },
+        ]);
     }
 }
 
 if (typeof window !== 'undefined') window.Trafo = Trafo;
+
+console.log('[trafo] Version 2026-06-07 build 1 (renderResults)');
