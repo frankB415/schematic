@@ -10,8 +10,8 @@
 
 <h1>Lastfluss Demo9 — Q3 · 2× Trafo-Gleichrichter · DC-Last</h1>
 <p class="subtitle">
-  k_ac: Spannungsquelle 400V L-L, 5MVA &nbsp;|&nbsp;
-  k_dc: gemeinsamer DC-Knoten (~310V) &nbsp;|&nbsp;
+  k_ac: Spannungsquelle 20kV L-L, 50MVA &nbsp;|&nbsp;
+  k_dc: gemeinsamer DC-Knoten (~796V) &nbsp;|&nbsp;
   Topologie: Y (eine Quelle, zwei Gleichrichter, eine Last)
 </p>
 
@@ -32,6 +32,7 @@
 <script src="/schematic/schematicBlock/schematicBlock.js"></script>
 <script src="/schematic/labeledBlock/labeledBlock.js"></script>
 <script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/wireBlocks.js"></script>
 <script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
 <script src="/schematic/lastflussBlock/last.js"></script>
 <script src="/schematic/lastflussKomplexBlock/lastflussKomplexBlock.js"></script>
@@ -39,7 +40,6 @@
 <script src="/schematic/lastflussKomplexBlock/trafoGleichrichter.js"></script>
 <script src="/schematic/simulator/baseSim.js"></script>
 <script src="/schematic/simulator/nodeBaseSim.js"></script>
-<script src="/schematic/simulator/lastflussSim.js"></script>
 <script src="/schematic/simulator/lastflussKomplexSim.js"></script>
 
 <script>
@@ -55,25 +55,26 @@ function log(msg, cls = '') {
 
 // ── Blöcke ───────────────────────────────────────────────────────────────────
 
-// Gemeinsame AC-Quelle in der Mitte
+// Gemeinsame AC-Quelle 20kV
 const quelle3 = new Spannungsquelle('Q3', {
-    uNom: 400, skNom: 5e6,
+    uNom: 20000, skNom: 50e6,
     x: 300, y: 40,
 });
 
+// Zwei Trafo-Gleichrichter 20kV/590V, je 1.2MVA → vDc0 = 590*1.35 = 796V
 const trafoGr1 = new TrafoGleichrichter('TR-GR1', {
-    u1Nenn: 400, u2Nenn: 230, sNenn: 100e3, ukPct: 4,
+    u1Nenn: 20000, u2Nenn: 590, sNenn: 1.2e6, uk: 4,
     x: 150, y: 200,
 });
 
 const trafoGr2 = new TrafoGleichrichter('TR-GR2', {
-    u1Nenn: 400, u2Nenn: 230, sNenn: 200e3, ukPct: 6,
+    u1Nenn: 20000, u2Nenn: 590, sNenn: 1.2e6, uk: 6,
     x: 500, y: 200,
 });
 
-// DC-Last: 250kW, aktiv 280–340V
+// DC-Last: 2MW, aktiv 720–800V
 const last = new Last('Last', {
-    pNom: 250e3, uMin: 280, uMax: 340,
+    pNom: 2e6, uMin: 720, uMax: 800,
     x: 300, y: 400,
 });
 
@@ -86,76 +87,42 @@ last.render(schematic);
 
 // ── Simulation ───────────────────────────────────────────────────────────────
 //
-//  k_ac — AC-Knoten: Q3 + TR-GR1(in) + TR-GR2(in)
-//  k_dc — DC-Knoten: TR-GR1(out) + TR-GR2(out) + Last(in)
+//  k_ac — AC-Knoten: Q3 + TR-GR1(in) + TR-GR2(in)   20kV
+//  k_dc — DC-Knoten: TR-GR1(out) + TR-GR2(out) + Last(in)  ~796V
 //
-const sim = new lastflussKomplexSim([
-    { id: 'k_ac', blocks: [quelle3, trafoGr1, trafoGr2],  uMin: 350, uMax: 450 },
-    { id: 'k_dc', blocks: [trafoGr1, trafoGr2, last],     uMin: 0,   uMax: 315 },
-], { epsilon: 50, scanSteps: 10, logging: true });
+const blocks = [quelle3, trafoGr1, trafoGr2, last];
+
+const connections = [
+    { id: 'k_ac', from: 'Q3.out',      to: 'TR-GR1.in',  uMin: 18000, uMax: 22000 },
+    { id: 'k_ac', from: 'Q3.out',      to: 'TR-GR2.in',  uMin: 18000, uMax: 22000 },
+    { id: 'k_dc', from: 'TR-GR1.out',  to: 'Last.in',    uMin: 700,   uMax: 820   },
+    { id: 'k_dc', from: 'TR-GR2.out',  to: 'Last.in',    uMin: 700,   uMax: 820   },
+];
+
+const sim = new lastflussKomplexSim(blocks, connections, { epsilon: 50, scanSteps: 10, logging: true, timing: true });
 
 requestAnimationFrame(() => {
 
     // ── Wires ─────────────────────────────────────────────────────────────────
-    const connectors = [
-        ...quelle3.getConnectorPositions(schematic,  'q3'),
-        ...trafoGr1.getConnectorPositions(schematic, 'tgr1'),
-        ...trafoGr2.getConnectorPositions(schematic, 'tgr2'),
-        ...last.getConnectorPositions(schematic,     'last'),
-    ];
-
-    const connections = [
-        { id: 'k_ac-l',  from: 'q3.out',   to: 'tgr1.in'  },  // k_ac: Q3 → TR-GR1
-        { id: 'k_ac-r',  from: 'q3.out',   to: 'tgr2.in'  },  // k_ac: Q3 → TR-GR2
-        { id: 'k_dc-l',  from: 'tgr1.out', to: 'last.in'  },  // k_dc: TR-GR1 → Last
-        { id: 'k_dc-r',  from: 'tgr2.out', to: 'last.in'  },  // k_dc: TR-GR2 → Last
-    ];
-
-    const blocked = [quelle3, trafoGr1, trafoGr2, last].map(b => b.getImageDiv());
-
     try {
-        const wire = new ElectricalWire(schematic, {
-            gridSize: 10, wireColor: '#a0c0ff', wireWidth: 1.5,
-        });
-        wire.setConnectors(connectors);
-        wire.setConnections(connections);
-        wire.setBlockedAreas(blocked, { shrink: 5 });
-        wire.render();
+        console.log('[demo9] vor wireBlocks');
+        wireBlocks(schematic, blocks, connections);
         log('Routing OK');
     } catch(e) {
         log(`Routing Fehler: ${e.message}`, 'err');
+        console.error('[demo9] wireBlocks Fehler:', e);
     }
 
     // ── Solve ─────────────────────────────────────────────────────────────────
+    console.log('[demo9] vor solve — nodes:', sim._nodes?.map(n => n.id + ':' + n.blocks.map(b=>b._label).join(',')));
+    console.log('[demo9] logging:', sim._logging, 'epsilon:', sim._epsilon);
     try {
-        const { voltages, converged, iterations } = sim.solve();
-
-        const fmtAC = v => {
-            if (!v) return '?';
-            const abs = Math.sqrt(v.re**2 + v.im**2) / 1000;
-            const phi = Math.atan2(v.im, v.re) * 180 / Math.PI;
-            return `${abs.toFixed(3)} kV ∠ ${phi.toFixed(1)}°`;
-        };
-        const fmtDC = v => v == null ? '?' : `${(+v).toFixed(1)} V`;
-
-        log(`${converged ? '✓' : '⚠'} Konvergenz nach ${iterations} Iterationen`, converged ? '' : 'warn');
-        log(`k_ac (AC): U = ${fmtAC(voltages.get('k_ac'))}`);
-        log(`k_dc (DC): U = ${fmtDC(voltages.get('k_dc'))}`);
-
-        log('── Blockergebnisse ──');
-        [
-            ['Q3',        quelle3],
-            ['TR-GR1',    trafoGr1],
-            ['TR-GR2',    trafoGr2],
-            ['Last (DC)', last],
-        ].forEach(([name, block]) => {
-            log(`${name}:`);
-            Object.entries(block.results || {}).forEach(([key, val]) => {
-                const fmt = block._resultFormats?.[key];
-                log(`  ${fmt ? fmt(val) : JSON.stringify(val)}`);
-            });
-        });
+        console.log('[demo9] solve() start');
+        const result = sim.solve();
+        console.log('[demo9] solve() done', result);
+        log(`${result.converged ? '✓' : '⚠'} Konvergenz nach ${result.iterations} Iterationen`, result.converged ? '' : 'warn');
     } catch(e) {
+        console.error('[demo9] solve() Fehler:', e);
         log(`Solver Fehler: ${e.message}`, 'err');
         console.error(e);
     }
