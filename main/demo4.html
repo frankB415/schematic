@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Lastfluss Demo4 — MPPT</title>
+<link rel="stylesheet" href="/schematic/schematicBlock/schematicBlock.css">
+  <link rel="stylesheet" href="/schematic/demo.css">
+</head>
+<body>
+
+<h1>Lastfluss Demo4 — Solarpanel mit MPPT</h1>
+<p class="subtitle">
+  Knoten1: MPPT1 + DCDC.in &nbsp;|&nbsp;
+  Knoten2: MPPT2 + Last + DCDC.out &nbsp;|&nbsp;
+  Beide Panels mit internem MPPT-Tracker (konstante Leistung im Spannungsfenster)
+</p>
+
+<div id="schematic" style="width:700px; height:520px; position: relative;"></div>
+<div id="log"></div>
+
+<script src="/schematic/schematicBlock/schematicBlock.js"></script>
+<script src="/schematic/labeledBlock/labeledBlock.js"></script>
+<script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/wireBlocks.js"></script>
+<script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
+<script src="/schematic/lastflussBlock/solarPanelMPPT.js"></script>
+<script src="/schematic/lastflussBlock/last.js"></script>
+<script src="/schematic/lastflussBlock/dcdc.js"></script>
+<script src="/schematic/simulator/baseSim.js"></script>
+<script src="/schematic/simulator/nodeBaseSim.js"></script>
+<script src="/schematic/simulator/lastflussKomplexSim.js"></script>
+
+<script type="module">
+
+const logEl = document.getElementById('log');
+function log(msg, cls = '') {
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = msg;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── Instanzen ────────────────────────────────────────────────────────────────
+//
+//   Knoten1 (hohe Seite):    MPPT1 + DCDC.in    U1 ∈ [20, 40V]
+//   Knoten2 (niedrige Seite): MPPT2 + Last + DCDC.out  U2 ∈ [20, 40V]
+//
+//   Layout:
+//
+//   [MPPT1]        [DCDC]        [MPPT2]
+//      |              |in             |
+//      └──── k1 ──────┘       k2 ────┘
+//                             |out
+//                           [Last]
+//
+const mppt1 = new SolarPanelMPPT('MPPT1', { pNom: 300, uMin: 20, uMax: 40, x:  90, y:  70 });
+const dcdc  = new DCDC('DCDC1', { vNomIn: 35, vNomOut: 29.2, eta: 0.95, pNom: 300, couplingImpedance: 1.5, x:  90, y: 210, });
+const last1 = new Last('Last1', { pNom: 450, uMin: 20, uMax: 40, x:  90, y: 350 });
+const mppt2 = new SolarPanelMPPT('MPPT2', { pNom: 300, uMin: 20, uMax: 40, x: 530, y:  70 });
+
+// ── Layout ───────────────────────────────────────────────────────────────────
+const schematic = document.getElementById('schematic');
+
+mppt1.render(schematic);
+dcdc.render(schematic);
+last1.render(schematic);
+mppt2.render(schematic);
+const blocks = [mppt1, dcdc, mppt2, last1];
+
+const connections = [
+    { id: 'k1', from: 'MPPT1.out', to: 'DCDC1.in',  uMin: 20, uMax: 40 },
+    { id: 'k2', from: 'MPPT2.out', to: 'Last1.in',  uMin: 20, uMax: 40 },
+    { id: 'k2', from: 'DCDC1.out', to: 'Last1.in',  uMin: 20, uMax: 40 },
+];
+
+const sim = new lastflussKomplexSim(blocks, connections, { logging: true, epsilon: 0.5 });
+
+// ── Routing ──────────────────────────────────────────────────────────────────
+requestAnimationFrame(() => {
+  try {
+    wireBlocks(schematic, blocks, connections, { wireColor: '#7ecfff' });
+    log('Routing OK');
+  } catch(e) {
+    log('Routing Fehler: ' + e.message, 'err');
+    console.error(e);
+  }
+
+  try {
+    const result = sim.solve();
+    log(`${result.converged ? '✓' : '⚠'} Konvergenz nach ${result.iterations} Iterationen`, result.converged ? '' : 'warn');
+  } catch(e) {
+    log(`Solver Fehler: ${e.message}`, 'err');
+    console.error(e);
+  }
+});
+
+</script>
+</body>
+</html>
