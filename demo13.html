@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Lastfluss Demo13 — AC-Netz + PV → DC-Bus 800V / 5MW</title>
+
+<link rel="stylesheet" href="/schematic/schematicBlock/schematicBlock.css">
+<link rel="stylesheet" href="/schematic/demo.css">
+</head>
+<body>
+
+<h1>Lastfluss Demo13 — Zweigespeister DC-Bus 800 V / 5 MW</h1>
+<p class="subtitle">
+  Einspeisung 1: ACNetz 20kV · Kabel · TrafoGleichrichter &nbsp;|&nbsp;
+  Einspeisung 2: SolarPanel · DCDC 800V &nbsp;|&nbsp;
+  DC-Last: 5 MW / 800 V
+</p>
+
+<!--
+  Layout (zwei Spalten, gemeinsamer DC-Bus unten):
+
+  Linke Spalte (AC-Pfad):            Rechte Spalte (PV-Pfad):
+  [Quelle 20kV]   x=130, y=60       [SolarPanel]      x=570, y=60
+       | k_ac1                             | k_pv
+  [ACKabel]       x=130, y=210      [DCDC]             x=570, y=210
+       | k_ac2                             | k_dc (shared)
+  [TrafoGleichrichter] x=130, y=390 [DCDC]             x=570, y=390
+       \___________________  k_dc  ___________________/
+                          [Last 5MW]  x=250, y=580
+-->
+
+<div id="schematic" style="width:760px; height:760px; position:relative;"></div>
+<div id="log"></div>
+
+<script src="/schematic/schematicBlock/schematicBlock.js"></script>
+<script src="/schematic/labeledBlock/labeledBlock.js"></script>
+<script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/wireBlocks.js"></script>
+<script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
+<script src="/schematic/lastflussBlock/last.js"></script>
+<script src="/schematic/lastflussBlock/solarPanel.js"></script>
+<script src="/schematic/lastflussBlock/dcKabel.js"></script>
+<script src="/schematic/lastflussBlock/dcdcDroop.js"></script>
+<script src="/schematic/lastflussKomplexBlock/lastflussKomplexBlock.js"></script>
+<script src="/schematic/lastflussKomplexBlock/spannungsquelle.js"></script>
+<script src="/schematic/lastflussKomplexBlock/acKabel.js"></script>
+<script src="/schematic/lastflussKomplexBlock/trafoGleichrichter.js"></script>
+<script src="/schematic/simulator/baseSim.js"></script>
+<script src="/schematic/simulator/nodeBaseSim.js"></script>
+<script src="/schematic/simulator/lastflussKomplexSim.js"></script>
+
+<script>
+
+const logEl = document.getElementById('log');
+function log(msg, cls = '') {
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = msg;
+    logEl.appendChild(d);
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── Blöcke ───────────────────────────────────────────────────────────────────
+
+// Einspeisung 1: AC-Netz 20 kV
+const quelle = new Spannungsquelle('Quelle', {
+    uNom: 20000, skNom: 500e6,
+    x: 130, y: 60,
+});
+
+// 20kV-Kabel: 5 km, 150 mm²
+const kabel = new ACKabel('Kabel', {
+    laenge: 5, quer: 150, uNenn: 20000,
+    x: 130, y: 210,
+});
+
+// Trafo-Gleichrichter: 20kV → 630V AC → ~850V DC (B6), 6MVA, uk=6%
+// u2Nenn=630V → vDc0 = 630*1.35 ≈ 850V; mit Last bei 800V
+const trafoGr = new TrafoGleichrichter('TR-GR', {
+    u1Nenn: 20000, u2Nenn: 630, sNenn: 6e6, uk: 6,
+    eta: 0.993, etaBruecke: 0.997,
+    x: 130, y: 390,
+});
+
+// Einspeisung 2: PV-Feld, Voc=1000V, 6 MW
+const pv = new SolarPanel('PV', {
+    pNom: 6e6, voc: 20000,
+    x: 570, y: 60,
+});
+
+// DC-Kabel: 1 km, 150 mm², 18 kV DC
+const pvKabel = new DCKabel('PV-Kabel', {
+    laenge: 1, quer: 150, uNenn: 18000,
+    x: 570, y: 210,
+});
+
+// DC/DC Droop: 1.2kV → 800V, 2.5MW, pRef=2.5MW (halbe Last)
+const dcdc = new DCDCDroop('DCDC', {
+    vNomIn: 18000, vNomOut: 800,
+    eta: 0.97,
+    pNom: 2.5e6,
+    pRef: 2.5e6,
+    kDroop: 5,
+    vBandIn: 30,
+    vBandOut: 15,
+    x: 570, y: 330,
+});
+
+// DC-Last: 5 MW, 800 V
+const last = new Last('Last', {
+    pNom: 5e6, uNom: 800, uMin: 300, uMax: 1300,
+    x: 250, y: 580,
+});
+
+// ── Render ───────────────────────────────────────────────────────────────────
+const schematic = document.getElementById('schematic');
+quelle.render(schematic);
+kabel.render(schematic);
+trafoGr.render(schematic);
+pv.render(schematic);
+pvKabel.render(schematic);
+dcdc.render(schematic);
+last.render(schematic);
+
+// ── Simulation ───────────────────────────────────────────────────────────────
+//
+//  k_ac1  — AC 20kV:  Quelle.out + Kabel.in
+//  k_ac2  — AC 20kV (nach Kabel): Kabel.out + TR-GR.in
+//  k_pv1  — DC 18kV: PV.out + PV-Kabel.in
+//  k_pv2  — DC 18kV: PV-Kabel.out + DCDC.in
+//  k_dc   — DC 800V:  TR-GR.out + DCDC.out + Last.in
+//
+const blocks = [quelle, kabel, trafoGr, pv, pvKabel, dcdc, last];
+
+const connections = [
+    { id: 'k_ac1', from: 'Quelle.out', to: 'Kabel.in',  uMin: 19000, uMax: 21000 },
+    { id: 'k_ac2', from: 'Kabel.out',  to: 'TR-GR.in',  uMin: 19000, uMax: 21000 },
+    { id: 'k_pv1', from: 'PV.out',       to: 'PV-Kabel.in', uMin: 15500, uMax: 22000 },
+    { id: 'k_pv2', from: 'PV-Kabel.out',  to: 'DCDC.in',     uMin: 15500, uMax: 22000 },
+    { id: 'k_dc',  from: 'TR-GR.out',  to: 'Last.in',   uMin:   700, uMax:   900 },
+    { id: 'k_dc',  from: 'DCDC.out',   to: 'Last.in',   uMin:   700, uMax:   900 },
+];
+
+const sim = new lastflussKomplexSim(blocks, connections, {
+    epsilon:   0.1,
+    scanSteps: 8,
+    logging:   true,
+});
+
+requestAnimationFrame(() => {
+
+    // ── Wires ─────────────────────────────────────────────────────────────────
+    try {
+        wireBlocks(schematic, blocks, connections);
+        log('Routing OK');
+    } catch(e) {
+        log(`Routing Fehler: ${e.message}`, 'err');
+    }
+
+    // ── Solve ─────────────────────────────────────────────────────────────────
+    try {
+        const { voltages, converged, iterations } = sim.solve();
+
+        log(`${converged ? '✓' : '⚠'} Konvergenz nach ${iterations} Iterationen`,
+            converged ? '' : 'warn');
+
+        const fmtAC = v => {
+            if (!v) return '?';
+            const abs = Math.sqrt(v.re**2 + v.im**2) / 1000;
+            const phi = Math.atan2(v.im, v.re) * 180 / Math.PI;
+            return `${abs.toFixed(3)} kV ∠ ${phi.toFixed(1)}°`;
+        };
+        const fmtDC = v => v == null ? '?' : `${(+v / 1000).toFixed(3)} kV`;
+
+        log(`k_ac1 (20kV AC):     U = ${fmtAC(voltages.get('k_ac1'))}`);
+        log(`k_ac2 (n. AC-Kabel): U = ${fmtAC(voltages.get('k_ac2'))}`);
+        log(`k_pv1 (PV→Kabel):    U = ${fmtDC(voltages.get('k_pv1'))}`);
+        log(`k_pv2 (Kabel→DCDC): U = ${fmtDC(voltages.get('k_pv2'))}`);
+        log(`k_dc  (800V DC):     U = ${fmtDC(voltages.get('k_dc'))}`);
+
+        log('── Blockergebnisse ──');
+        [
+            ['Quelle 20kV',   quelle],
+            ['AC-Kabel 5km',  kabel],
+            ['Trafo-GR',      trafoGr],
+            ['PV 6MW',        pv],
+            ['PV-Kabel 1km',  pvKabel],
+            ['DCDCDroop',      dcdc],
+            ['Last 5MW DC',   last],
+        ].forEach(([name, block]) => {
+            log(`${name}:`);
+            Object.entries(block.results || {}).forEach(([key, val]) => {
+                const fmt = block._resultFormats?.[key];
+                log(`  ${fmt ? fmt(val) : JSON.stringify(val)}`);
+            });
+        });
+
+    } catch(e) {
+        log(`Solver Fehler: ${e.message}`, 'err');
+        console.error(e);
+    }
+});
+
+</script>
+</body>
+</html>
