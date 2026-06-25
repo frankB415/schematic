@@ -21,6 +21,7 @@
 <script src="/schematic/schematicBlock/schematicBlock.js"></script>
 <script src="/schematic/labeledBlock/labeledBlock.js"></script>
 <script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/wireBlocks.js"></script>
 <script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
 <script src="/schematic/lastflussBlock/last.js"></script>
 <script src="/schematic/lastflussKomplexBlock/lastflussKomplexBlock.js"></script>
@@ -28,7 +29,6 @@
 <script src="/schematic/lastflussKomplexBlock/trafoGleichrichter.js"></script>
 <script src="/schematic/simulator/baseSim.js"></script>
 <script src="/schematic/simulator/nodeBaseSim.js"></script>
-<script src="/schematic/simulator/lastflussSim.js"></script>
 <script src="/schematic/simulator/lastflussKomplexSim.js"></script>
 
 <script>
@@ -59,7 +59,7 @@ const quelle = new Spannungsquelle('Quelle', {
 });
 
 const trafoGr = new TrafoGleichrichter('TR-GR', {
-    u1Nenn: 400, u2Nenn: 230, sNenn: 100e3, ukPct: 4, pNom: 20e3,
+    u1Nenn: 400, u2Nenn: 230, sNenn: 100e3, uk: 4, pNom: 20e3,
     x: 170, y: 200,
 });
 
@@ -74,41 +74,26 @@ const schematic = document.getElementById('schematic');
 quelle.render(schematic);
 trafoGr.render(schematic);
 last.render(schematic);
+const blocks = [quelle, trafoGr, last];
+
+const connections = [
+    { id: 'k1',   from: 'Quelle.out', to: 'TR-GR.in',  uMin: 350, uMax: 450 },
+    { id: 'k_dc', from: 'TR-GR.out',  to: 'Last.in',   uMin: 250, uMax: 310 },
+];
+
+const sim = new lastflussKomplexSim(blocks, connections, { epsilon: 50, scanSteps: 8, logging: true });
 
 // ── Simulation ───────────────────────────────────────────────────────────────
 //
 //  k1   — AC-Knoten: Quelle + TrafoGleichrichter (in)
 //  k_dc — DC-Knoten: TrafoGleichrichter (out) + Last (in)
 //
-const sim = new lastflussKomplexSim([
-    { id: 'k1',   blocks: [quelle, trafoGr],  uMin: 350,  uMax: 450  },
-    { id: 'k_dc', blocks: [trafoGr, last],    uMin: 100,  uMax: 310  },  // uMax < vDcIdeal (230*1.35=310V)
-], { epsilon: 50, scanSteps: 8, logging: true });
 
 requestAnimationFrame(() => {
 
     // ── Wires ─────────────────────────────────────────────────────────────────
-    const connectors = [
-        ...quelle.getConnectorPositions(schematic,  'quelle'),
-        ...trafoGr.getConnectorPositions(schematic, 'trafogr'),
-        ...last.getConnectorPositions(schematic,    'last'),
-    ];
-
-    const connections = [
-        { id: 'k1',   from: 'quelle.out',  to: 'trafogr.in'  },
-        { id: 'k_dc', from: 'trafogr.out', to: 'last.in'      },
-    ];
-
-    const blocked = [quelle, trafoGr, last].map(b => b.getImageDiv());
-
     try {
-        const wire = new ElectricalWire(schematic, {
-            gridSize: 10, wireColor: '#a0c0ff', wireWidth: 1.5,
-        });
-        wire.setConnectors(connectors);
-        wire.setConnections(connections);
-        wire.setBlockedAreas(blocked, { shrink: 5 });
-        wire.render();
+        wireBlocks(schematic, blocks, connections, { wireColor: '#a0c0ff' });
         log('Routing OK');
     } catch(e) {
         log(`Routing Fehler: ${e.message}`, 'err');
