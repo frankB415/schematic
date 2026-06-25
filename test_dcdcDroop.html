@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>dcdcDroop — Tests</title>
+    <link rel="stylesheet" href="/schematic/schematicBlock/schematicBlock.css">
+    <script src="/schematic/schematicBlock/schematicBlock.js"></script>
+    <script src="/schematic/labeledBlock/labeledBlock.js"></script>
+    <script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
+    <script src="/schematic/lastflussBlock/dcdcDroop.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 2rem; background: #111827; color: #e5e7eb; }
+        h1   { font-size: 1.3rem; color: #30a8c8; margin-bottom: 0.25rem; }
+        .sub { font-size: 0.8rem; color: #6b7280; margin-bottom: 1.5rem; }
+        h2   { font-size: 1rem; color: #9ca3af; margin: 2rem 0 0.75rem;
+               border-bottom: 1px solid #374151; padding-bottom: 0.3rem; }
+        .test-result { display: flex; align-items: center; gap: 0.6rem;
+            padding: 0.3rem 0; border-bottom: 1px solid #1f2937; font-size: 0.85rem; }
+        .test-result:last-child { border-bottom: none; }
+        .badge { font-size: 0.72rem; font-weight: bold; padding: 2px 8px;
+            border-radius: 20px; min-width: 48px; text-align: center; }
+        .pass  { background: #064e3b; color: #6ee7b7; }
+        .fail  { background: #7f1d1d; color: #fca5a5; }
+        .summary { margin-top: 0.75rem; font-weight: bold; font-size: 0.95rem; padding: 0.4rem 0; }
+        /* Demo-Bereich */
+        .demo-area {
+            position: relative; background: #1f2937;
+            border: 1px solid #374151; border-radius: 6px;
+            margin-bottom: 1rem; overflow: hidden;
+        }
+        .demo-row { display: flex; gap: 0; }
+        .demo-schematic { position: relative; flex: 1; }
+        .demo-controls {
+            width: 320px; padding: 1rem; background: #111827;
+            border-left: 1px solid #374151; font-size: 0.8rem;
+        }
+        .demo-controls label { display: block; margin-bottom: 0.3rem; color: #9ca3af; }
+        .demo-controls input[type=range] { width: 100%; margin-bottom: 0.1rem; }
+        .demo-controls .val { color: #30a8c8; font-family: monospace; font-size: 0.85rem; }
+        .ctrl-group { margin-bottom: 0.8rem; }
+        .mode-badge {
+            display: inline-block; margin-top: 0.5rem;
+            padding: 4px 12px; border-radius: 4px;
+            font-family: monospace; font-size: 0.9rem; font-weight: bold;
+            background: #374151; color: #30a8c8;
+        }
+        .sb-text1 { background: rgba(255,210,80,0.1); border: 1px dashed #c8a030;
+            min-width: 8px; min-height: 8px; font-size: 0.68rem; line-height: 1.3; }
+        .sb-text2 { background: rgba(48,168,200,0.1); border: 1px dashed #30a8c8;
+            min-width: 8px; min-height: 8px; font-size: 0.68rem; line-height: 1.3; color:#30a8c8; }
+        /* LEDs */
+        .led {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 4px 10px; border-radius: 4px; font-size: 0.78rem;
+            font-family: monospace; font-weight: bold; cursor: default;
+            border: 1px solid #374151; color: #4b5563;
+            background: #1f2937; transition: all 0.1s;
+        }
+        .led::before {
+            content: ''; display: inline-block; width: 8px; height: 8px;
+            border-radius: 50%; background: #374151; transition: all 0.1s;
+        }
+        .led::after { content: attr(data-label); }
+        .led.active-droop  { background:#0f2937; border-color:#30a8c8; color:#30a8c8; }
+        .led.active-droop::before  { background:#30a8c8; box-shadow: 0 0 6px #30a8c8; }
+        .led.active-vband  { background:#1a2a0f; border-color:#84cc16; color:#84cc16; }
+        .led.active-vband::before  { background:#84cc16; box-shadow: 0 0 6px #84cc16; }
+        .led.active-plimit { background:#2a1f0f; border-color:#f59e0b; color:#f59e0b; }
+        .led.active-plimit::before { background:#f59e0b; box-shadow: 0 0 6px #f59e0b; }
+        .led.active-ilim   { background:#2a1a0f; border-color:#fb923c; color:#fb923c; }
+        .led.active-ilim::before   { background:#fb923c; box-shadow: 0 0 6px #fb923c; }
+        .led.active-ovp    { background:#2a0f0f; border-color:#f87171; color:#f87171; }
+        .led.active-ovp::before    { background:#f87171; box-shadow: 0 0 6px #f87171; }
+        .led.active-fwd    { background:#0f1f2a; border-color:#38bdf8; color:#38bdf8; }
+        .led.active-fwd::before    { background:#38bdf8; box-shadow: 0 0 6px #38bdf8; }
+        .led.active-rev    { background:#1a0f2a; border-color:#a78bfa; color:#a78bfa; }
+        .led.active-rev::before    { background:#a78bfa; box-shadow: 0 0 6px #a78bfa; }
+        .led.active-stby   { background:#1a1a1a; border-color:#6b7280; color:#9ca3af; }
+        .led.active-stby::before   { background:#6b7280; }
+        button { padding: 5px 12px; border-radius: 4px; border: 1px solid #374151;
+            background: #1f2937; color: #9ca3af; cursor: pointer; font-size: 0.8rem; }
+        button:hover { border-color: #30a8c8; color: #30a8c8; }
+    </style>
+</head>
+<body>
+<h1>DCDCDroop — Tests</h1>
+<p class="sub">Automatisierte Unit-Tests + interaktive Demo (FWD / REV / Schutzfunktionen)</p>
+
+<div id="test-results"></div>
+
+<!-- ═══════ INTERAKTIVE DEMO ═══════ -->
+<h2>Interaktive Demo</h2>
+<div class="demo-area">
+  <div class="demo-row">
+
+    <!-- Block-Anzeige -->
+    <div class="demo-schematic" id="schematic" style="height:260px; min-width:200px;"></div>
+
+    <!-- Slider -->
+    <div class="demo-controls">
+      <div class="ctrl-group">
+        <label>vIn (Eingang) <span class="val" id="lbl-vIn">48.0 V</span></label>
+        <input type="range" id="sl-vIn" min="0" max="70" step="0.5" value="48">
+      </div>
+      <div class="ctrl-group">
+        <label>vOut (Ausgang) <span class="val" id="lbl-vOut">24.0 V</span></label>
+        <input type="range" id="sl-vOut" min="0" max="40" step="0.5" value="24">
+      </div>
+      <div class="ctrl-group">
+        <label>pRef <span class="val" id="lbl-pRef">0 W</span></label>
+        <input type="range" id="sl-pRef" min="-500" max="500" step="10" value="0">
+      </div>
+      <div class="ctrl-group">
+        <label>kDroop <span class="val" id="lbl-kDroop">5 %</span></label>
+        <input type="range" id="sl-kDroop" min="1" max="30" step="1" value="5">
+      </div>
+      <div style="margin-top:0.5rem; font-size:0.72rem; color:#6b7280;">
+        pNom=500W &nbsp;·&nbsp; vNomIn=48V &nbsp;·&nbsp; vNomOut=24V<br>
+        vBandIn=10% &nbsp;·&nbsp; vBandOut=10% &nbsp;·&nbsp; vMaxIn=20% &nbsp;·&nbsp; vMaxOut=20%
+      </div>
+    </div>
+  </div>
+
+  <!-- Status-LEDs -->
+  <div id="status-bar" style="
+      display:flex; gap:0.5rem; flex-wrap:wrap;
+      padding:0.75rem 1rem; border-top:1px solid #374151;
+      background:#111827; align-items:center;">
+
+    <!-- Regeleingriff -->
+    <span class="led" id="led-droop"  data-label="Droop"></span>
+    <span class="led" id="led-vband"  data-label="V-Band"></span>
+    <span class="led" id="led-plimit" data-label="P-Limit"></span>
+    <span class="led" id="led-ilim"   data-label="ILim"></span>
+    <span class="led" id="led-ovp"    data-label="OVP"></span>
+
+    <span style="width:1px; height:24px; background:#374151; margin:0 0.25rem;"></span>
+
+    <!-- Richtung -->
+    <span class="led" id="led-fwd"  data-label="FWD"></span>
+    <span class="led" id="led-rev"  data-label="REV"></span>
+    <span class="led" id="led-stby" data-label="STBY"></span>
+
+    <span style="width:1px; height:24px; background:#374151; margin:0 0.25rem;"></span>
+
+    <!-- Faktoren -->
+    <span id="lbl-factor-ilim" style="font-family:monospace; font-size:0.78rem; color:#6b7280;">ILim: 100%</span>
+    <span id="lbl-factor-ovp"  style="font-family:monospace; font-size:0.78rem; color:#6b7280;">OVP: 100%</span>
+  </div>
+</div>
+
+<!-- ═══════ TEST-SZENARIEN ═══════ -->
+<h2>Szenarien</h2>
+<div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem;">
+  <button onclick="runScenario('droop_fwd')">Droop FWD</button>
+  <button onclick="runScenario('droop_rev')">Droop REV</button>
+  <button onclick="runScenario('vband_in')">V-Band in</button>
+  <button onclick="runScenario('vband_out')">V-Band out</button>
+  <button onclick="runScenario('plimit')">P-Limit</button>
+  <button onclick="runScenario('ovp')">OVP</button>
+  <button onclick="runScenario('ilim')">ILim</button>
+  <button onclick="runScenario('stby')">Standby</button>
+</div>
+<div id="scenario-log" style="font-family:monospace; font-size:0.8rem;
+  background:#1f2937; border:1px solid #374151; border-radius:4px;
+  padding:0.75rem; min-height:40px; color:#9ca3af;"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════
+//  Test-Rahmen
+// ═══════════════════════════════════════════════════════════════════════
+const testResults = [];
+function assert(desc, fn) {
+    let debugCtx = null;
+    // Testfunktion bekommt eine setDebug()-Callback um Kontext zu registrieren
+    const setDebug = (ctx) => { debugCtx = ctx; };
+    try {
+        fn(setDebug);
+        testResults.push({ ok: true, desc });
+        console.log(`%c✓ PASS%c ${desc}`, 'color:#6ee7b7;font-weight:bold', 'color:inherit');
+    } catch(e) {
+        testResults.push({ ok: false, desc, err: e.message });
+        console.error(`✗ FAIL ${desc} — ${e.message}`);
+        if (debugCtx) console.table(debugCtx);
+    }
+}
+function assertClose(a, b, eps = 0.5, label = '') {
+    if (Math.abs(a - b) > eps)
+        throw new Error(`${label ? label+': ' : ''}erwartet ~${b}, erhalten ${a.toFixed(4)}`);
+}
+function assertEqual(a, b) {
+    if (a !== b) throw new Error(`erwartet "${b}", erhalten "${a}"`);
+}
+function assertGt(a, b) { if (a <= b) throw new Error(`erwartet > ${b}, erhalten ${a}`); }
+function assertLt(a, b) { if (a >= b) throw new Error(`erwartet < ${b}, erhalten ${a}`); }
+
+// Hilfsfunktion: DCDCDroop direkt testen ohne DOM
+// Gibt _calc()-Ergebnis + alle internen Zwischenwerte zurück
+function calc(opts, vIn, vOut) {
+    const d = new DCDCDroop('t', opts);
+    const r = d._calc(vIn, vOut);
+    const kDroop_pu = d.kDroop / 100;
+    const vIn_pu    = vIn  / d.vNomIn;
+    const vOut_pu   = vOut / d.vNomOut;
+    r._debug = {
+        // — Parameter —
+        vNomIn:      d.vNomIn,
+        vNomOut:     d.vNomOut,
+        pNom:        d.pNom,
+        pRef:        d.pRef,
+        kDroop:      d.kDroop,
+        eta:         d.eta,
+        vBandIn:     d.vBandIn,
+        vBandOut:    d.vBandOut,
+        vMaxIn:      d.vMaxIn,
+        vMaxOut:     d.vMaxOut,
+        // — Eingaben —
+        vIn, vOut,
+        // — Zwischenwerte —
+        vIn_pu:      +vIn_pu.toFixed(4),
+        vOut_pu:     +vOut_pu.toFixed(4),
+        'Δu_pu':     +(vIn_pu - vOut_pu).toFixed(4),
+        kDroop_pu,
+        pAct_droop:  +(d.pRef + (vIn_pu - vOut_pu) / kDroop_pu * d.pNom).toFixed(2),
+        pAct_band:   +r.pAct_band.toFixed(2),
+        bandActive:  r.bandActive,
+        pLimitActive:r.pLimitActive,
+        factorILim:  +r.factorILim.toFixed(4),
+        factorOVP:   +r.factorOVP.toFixed(4),
+        vShutdownIn: +(d.vNomIn  * (1 + d.vMaxIn  / 100)).toFixed(2),
+        vShutdownOut:+(d.vNomOut * (1 + d.vMaxOut / 100)).toFixed(2),
+        // — Ergebnis —
+        pAct:        +r.pAct.toFixed(2),
+        iMaxIn:      +(d.pNom / d.eta / d.vNomIn  * 1.05).toFixed(3),
+        iMaxOut:     +(d.pNom / d.eta / d.vNomOut * 1.05).toFixed(3),
+    };
+    return r;
+}
+function power(opts, vIn, vOut) {
+    const d = new DCDCDroop('t', opts);
+    const p = d.calcPower({ in: vIn, out: vOut });
+    const r = d._calc(vIn, vOut);
+    p._debug = {
+        // — Parameter —
+        vNomIn: d.vNomIn, vNomOut: d.vNomOut, pNom: d.pNom,
+        pRef: d.pRef, eta: d.eta, kDroop: d.kDroop,
+        vBandIn: d.vBandIn, vBandOut: d.vBandOut,
+        // — Eingaben —
+        vIn, vOut,
+        // — Zwischenwerte —
+        pAct:      +r.pAct.toFixed(2),
+        factorILim:+r.factorILim.toFixed(4),
+        factorOVP: +r.factorOVP.toFixed(4),
+        // — Ergebnis —
+        pIn:  +p.in.toFixed(3),
+        pOut: +p.out.toFixed(3),
+    };
+    return p;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  UNIT TESTS
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── Instanziierung ───────────────────────────────────────────────────────
+assert('DCDCDroop ist instanceof lastflussBlock', () => {
+    if (!(new DCDCDroop('x') instanceof lastflussBlock))
+        throw new Error('nicht instanceof lastflussBlock');
+});
+assert('Default-Parameter gesetzt', () => {
+    const d = new DCDCDroop('x');
+    assertEqual(d.vNomIn,  48);
+    assertEqual(d.vNomOut, 24);
+    assertEqual(d.eta,   0.95);
+    assertEqual(d.pNom,  500);
+    assertEqual(d.pRef,    0);
+    assertEqual(d.kDroop,  5);
+});
+assert('Connectors vorhanden (in + out)', () => {
+    const d = new DCDCDroop('x');
+    if (d.connectors.length !== 2) throw new Error('erwartet 2 Connectoren');
+    if (!d.connectors.find(c => c.name === 'in'))  throw new Error('kein in-Connector');
+    if (!d.connectors.find(c => c.name === 'out')) throw new Error('kein out-Connector');
+});
+
+// ── Droop-Grundverhalten ─────────────────────────────────────────────────
+assert('pRef=0, vIn=vNomIn, vOut=vNomOut → pAct≈0 (Nennpunkt)', (sd) => {
+    const r = calc({}, 48, 24); sd(r._debug);
+    assertClose(r.pAct, 0, 1);
+});
+assert('Δu_pu=kDroop/100 → pAct≈+pNom (volle FWD-Leistung bei pRef=0)', (sd) => {
+    // vIn_pu=1.0, vOut_pu=0.95 → Δu=+0.05 → pAct = 0 + (0.05/0.05)*500 = +500
+    const r = calc({ kDroop: 5, pNom: 500, vBandIn: 50, vBandOut: 50 }, 48, 24 * 0.95); sd(r._debug);
+    assertClose(r.pAct, 500, 5);
+});
+assert('pRef=200 verschiebt Arbeitspunkt', (sd) => {
+    const r = calc({ pRef: 200 }, 48, 24); sd(r._debug);
+    assertClose(r.pAct, 200, 5);
+});
+assert('calcPower() hat keinen Seiteneffekt (_resultsValid bleibt false)', () => {
+    const d = new DCDCDroop('x');
+    d.calcPower({ in: 48, out: 24 });
+    if (d._resultsValid !== false) throw new Error('_resultsValid wurde verändert');
+});
+
+// ── Verlustformel FWD ────────────────────────────────────────────────────
+assert('FWD: out bekommt pAct, in liefert pAct/eta', (sd) => {
+    // pRef=300 → pAct≈300 im Nennpunkt
+    const p = power({ pRef: 300, pNom: 500, eta: 0.95 }, 48, 24); sd(p._debug);
+    assertClose(p.out,  300,  5, 'out');
+    assertClose(p.in,  -(300 / 0.95), 5, 'in');
+});
+assert('FWD: in liefert mehr als out (Verluste)', (sd) => {
+    const p = power({ pRef: 200, eta: 0.9 }, 48, 24); sd(p._debug);
+    if (!(Math.abs(p.in) > Math.abs(p.out)))
+        throw new Error(`|in|=${Math.abs(p.in).toFixed(1)} nicht > |out|=${Math.abs(p.out).toFixed(1)}`);
+});
+
+// ── Verlustformel REV ────────────────────────────────────────────────────
+assert('REV: in bekommt |pAct|, out liefert |pAct|/eta', (sd) => {
+    // pRef=-300, Nennpunkt → pAct≈-300
+    const p = power({ pRef: -300, pNom: 500, eta: 0.95, vBandIn: 50, vBandOut: 50 }, 48, 24); sd(p._debug);
+    assertClose(p.in,   300,  5, 'in (Senke)');
+    assertClose(p.out, -(300 / 0.95), 5, 'out (Quelle)');
+});
+assert('REV: out liefert mehr als in bekommt (Verluste)', (sd) => {
+    const p = power({ pRef: -200, eta: 0.9, vBandIn: 50, vBandOut: 50 }, 48, 24); sd(p._debug);
+    if (!(Math.abs(p.out) > Math.abs(p.in)))
+        throw new Error(`|out|=${Math.abs(p.out).toFixed(1)} nicht > |in|=${Math.abs(p.in).toFixed(1)}`);
+});
+
+// ── pNom-Clamp ───────────────────────────────────────────────────────────
+assert('pAct wird auf +pNom geclampt (FWD)', (sd) => {
+    // pRef=5000 >> pNom=500 → pAct_droop≈5000 → geclampt auf +500
+    // vIn=vNomIn, vOut=vNomOut → Nennströme, kein ILim, kein OVP
+    const r = calc({ pNom: 500, kDroop: 5, pRef: 5000, vBandIn: 80, vBandOut: 80 }, 48, 24); sd(r._debug);
+    assertClose(r.pAct, 500, 1);
+});
+assert('pAct wird auf -pNom geclampt (REV)', (sd) => {
+    // pRef=-5000 << -pNom → geclampt auf -500
+    const r = calc({ pNom: 500, kDroop: 5, pRef: -5000, vBandIn: 80, vBandOut: 80 }, 48, 24); sd(r._debug);
+    assertClose(r.pAct, -500, 1);
+});
+
+// ── Spannungsband ────────────────────────────────────────────────────────
+assert('vIn im Band → bandActive=false', (sd) => {
+    const r = calc({ vBandIn: 10, vBandOut: 10 }, 48, 24); sd(r._debug);
+    if (r.bandActive) throw new Error('bandActive sollte false sein im Nennpunkt');
+});
+assert('vIn außerhalb Band → bandActive=true', (sd) => {
+    const r = calc({ vBandIn: 5, vBandOut: 5 }, 48 * 1.1, 24); sd(r._debug);
+    if (!r.bandActive) throw new Error('bandActive sollte true sein');
+});
+assert('vOut außerhalb Band → bandActive=true', (sd) => {
+    const r = calc({ vBandIn: 5, vBandOut: 5 }, 48, 24 * 1.1); sd(r._debug);
+    if (!r.bandActive) throw new Error('bandActive sollte true sein');
+});
+
+// ── OVP ──────────────────────────────────────────────────────────────────
+assert('vIn unter OVP-Grenze → factorOVP=1', (sd) => {
+    const r = calc({ vMaxIn: 20 }, 48 * 1.15, 24); sd(r._debug);
+    assertClose(r.factorOVP, 1.0, 0.01);
+});
+assert('vIn über OVP-Grenze → factorOVP<1', (sd) => {
+    const r = calc({ vMaxIn: 20 }, 48 * 1.25, 24); sd(r._debug);
+    assertLt(r.factorOVP, 1.0);
+});
+assert('vIn weit über OVP-Grenze → factorOVP=0 (abgeschaltet)', (sd) => {
+    const r = calc({ vMaxIn: 20 }, 48 * 1.5, 24); sd(r._debug);
+    assertClose(r.factorOVP, 0.0, 0.01);
+});
+assert('vOut über OVP-Grenze → factorOVP<1', (sd) => {
+    const r = calc({ vMaxOut: 20 }, 48, 24 * 1.25); sd(r._debug);
+    assertLt(r.factorOVP, 1.0);
+});
+
+// ── ILim ─────────────────────────────────────────────────────────────────
+assert('Im Nennpunkt bei pAct≈0 → factorILim=1', (sd) => {
+    const r = calc({}, 48, 24); sd(r._debug);
+    assertClose(r.factorILim, 1.0, 0.01);
+});
+assert('Hoher Strom → factorILim<1', (sd) => {
+    // iMaxIn = 500/48 ≈ 10.4A; bei vIn=10V und pRef=300W ist iIn=300/0.95/10 ≈ 31A → ILim
+    const r = calc({ pRef: 300 }, 10, 24); sd(r._debug);
+    assertLt(r.factorILim, 1.0);
+});
+
+// ── Modus-String ─────────────────────────────────────────────────────────
+assert('Normalfall Nennpunkt → "Droop STBY"', () => {
+    const d = new DCDCDroop('x', { pRef: 0 });
+    const mode = d._modeString(0, 1.0, 1.0, false, false);
+    assertEqual(mode, 'Droop STBY');
+});
+assert('OVP aktiv → beginnt mit "OVP"', () => {
+    const d = new DCDCDroop('x');
+    const mode = d._modeString(10, 0.5, 1.0, false, false);
+    if (!mode.startsWith('OVP')) throw new Error(`Modus: "${mode}"`);
+});
+assert('ILim aktiv → beginnt mit "ILim"', () => {
+    const d = new DCDCDroop('x');
+    const mode = d._modeString(10, 1.0, 0.8, false, false);
+    if (!mode.startsWith('ILim')) throw new Error(`Modus: "${mode}"`);
+});
+assert('P-Limit aktiv → beginnt mit "P-Limit"', () => {
+    const d = new DCDCDroop('x');
+    const mode = d._modeString(10, 1.0, 1.0, true, false);
+    if (!mode.startsWith('P-Limit')) throw new Error(`Modus: "${mode}"`);
+});
+assert('V-Band aktiv → beginnt mit "V-Band"', () => {
+    const d = new DCDCDroop('x');
+    const mode = d._modeString(10, 1.0, 1.0, false, true);
+    if (!mode.startsWith('V-Band')) throw new Error(`Modus: "${mode}"`);
+});
+assert('pAct > pStandby → endet mit "FWD"', () => {
+    const d = new DCDCDroop('x', { pNom: 500 });
+    const mode = d._modeString(100, 1.0, 1.0, false, false);
+    if (!mode.endsWith('FWD')) throw new Error(`Modus: "${mode}"`);
+});
+assert('pAct < -pStandby → endet mit "REV"', () => {
+    const d = new DCDCDroop('x', { pNom: 500 });
+    const mode = d._modeString(-100, 1.0, 1.0, false, false);
+    if (!mode.endsWith('REV')) throw new Error(`Modus: "${mode}"`);
+});
+assert('OVP hat Priorität über ILim', () => {
+    const d = new DCDCDroop('x');
+    const mode = d._modeString(10, 0.5, 0.5, true, true);
+    if (!mode.startsWith('OVP')) throw new Error(`Erwartet OVP, erhalten "${mode}"`);
+});
+assert('ILim hat Priorität über P-Limit', () => {
+    const d = new DCDCDroop('x');
+    const mode = d._modeString(10, 1.0, 0.5, true, false);
+    if (!mode.startsWith('ILim')) throw new Error(`Erwartet ILim, erhalten "${mode}"`);
+});
+
+// ── applyOperatingPoint ──────────────────────────────────────────────────
+assert('applyOperatingPoint() setzt _resultsValid=true', () => {
+    const d = new DCDCDroop('x');
+    const c = document.createElement('div'); d.render(c);
+    d.applyOperatingPoint({ in: 48, out: 24 });
+    if (d._resultsValid !== true) throw new Error('_resultsValid !== true');
+});
+assert('applyOperatingPoint() rendert Modus-Zeile im DOM', () => {
+    const d = new DCDCDroop('x');
+    const c = document.createElement('div'); d.render(c);
+    d.applyOperatingPoint({ in: 48, out: 24 });
+    const row = c.querySelector('[data-key="mode"]');
+    if (!row) throw new Error('data-key="mode" fehlt im DOM');
+    if (!row.textContent.includes('Modus')) throw new Error(`Kein "Modus" in: ${row.textContent}`);
+});
+assert('applyOperatingPoint() rendert ILim+OVP im DOM', () => {
+    const d = new DCDCDroop('x');
+    const c = document.createElement('div'); d.render(c);
+    d.applyOperatingPoint({ in: 48, out: 24 });
+    if (!c.querySelector('[data-key="factorILim"]')) throw new Error('factorILim fehlt im DOM');
+    if (!c.querySelector('[data-key="factorOVP"]'))  throw new Error('factorOVP fehlt im DOM');
+});
+
+// ── Ergebnisse rendern ───────────────────────────────────────────────────
+const rDiv = document.getElementById('test-results');
+testResults.forEach(r => {
+    const row = document.createElement('div'); row.className = 'test-result';
+    const b   = document.createElement('span'); b.className = `badge ${r.ok ? 'pass' : 'fail'}`;
+    b.textContent = r.ok ? 'PASS' : 'FAIL';
+    const t = document.createElement('span');
+    t.textContent = r.desc + (r.err ? ' — ' + r.err : '');
+    if (!r.ok) t.style.color = '#fca5a5';
+    row.appendChild(b); row.appendChild(t); rDiv.appendChild(row);
+});
+const passed = testResults.filter(r => r.ok).length;
+const sum = document.createElement('div'); sum.className = 'summary';
+sum.style.color = passed === testResults.length ? '#6ee7b7' : '#fca5a5';
+sum.textContent = `${passed} / ${testResults.length} Tests bestanden`;
+rDiv.appendChild(sum);
+const failed = testResults.length - passed;
+if (failed === 0)
+    console.log(`%c✓ Alle ${passed} Tests bestanden`, 'color:#6ee7b7;font-weight:bold;font-size:1.1em');
+else
+    console.warn(`✗ ${failed} von ${testResults.length} Tests FEHLGESCHLAGEN`);
+
+// ═══════════════════════════════════════════════════════════════════════
+//  INTERAKTIVE DEMO
+// ═══════════════════════════════════════════════════════════════════════
+const schematic = document.getElementById('schematic');
+const demoBlock = new DCDCDroop('DCDC-Droop', {
+    pNom: 500, pRef: 0, kDroop: 5,
+    vBandIn: 10, vBandOut: 10, vMaxIn: 20, vMaxOut: 20,
+    x: 120, y: 110,
+});
+demoBlock.render(schematic);
+
+function updateDemo() {
+    const vIn    = parseFloat(document.getElementById('sl-vIn').value);
+    const vOut   = parseFloat(document.getElementById('sl-vOut').value);
+    const pRef   = parseFloat(document.getElementById('sl-pRef').value);
+    const kDroop = parseFloat(document.getElementById('sl-kDroop').value);
+
+    document.getElementById('lbl-vIn').textContent    = vIn.toFixed(1)    + ' V';
+    document.getElementById('lbl-vOut').textContent   = vOut.toFixed(1)   + ' V';
+    document.getElementById('lbl-pRef').textContent   = pRef.toFixed(0)   + ' W';
+    document.getElementById('lbl-kDroop').textContent = kDroop.toFixed(0) + ' %';
+
+    demoBlock.pRef   = pRef;
+    demoBlock.kDroop = kDroop;
+    demoBlock.applyOperatingPoint({ in: vIn, out: vOut });
+
+    // Werte direkt aus _calc lesen (kein results-Objekt mehr)
+    const r    = demoBlock._calc(vIn, vOut);
+    const mode = demoBlock._modeString(r.pAct, r.factorOVP, r.factorILim, r.pLimitActive, r.bandActive);
+
+    // ── LEDs: Regeleingriff ───────────────────────────────────────────────
+    const regelMode = mode.split(' ')[0];
+    document.getElementById('led-droop') .className = 'led' + (regelMode === 'Droop'   ? ' active-droop'  : '');
+    document.getElementById('led-vband') .className = 'led' + (regelMode === 'V-Band'  ? ' active-vband'  : '');
+    document.getElementById('led-plimit').className = 'led' + (regelMode === 'P-Limit' ? ' active-plimit' : '');
+    document.getElementById('led-ilim')  .className = 'led' + (regelMode === 'ILim'    ? ' active-ilim'   : '');
+    document.getElementById('led-ovp')   .className = 'led' + (regelMode === 'OVP'     ? ' active-ovp'    : '');
+
+    // ── LEDs: Richtung ────────────────────────────────────────────────────
+    const dir = mode.split(' ')[1];
+    document.getElementById('led-fwd') .className = 'led' + (dir === 'FWD'  ? ' active-fwd'  : '');
+    document.getElementById('led-rev') .className = 'led' + (dir === 'REV'  ? ' active-rev'  : '');
+    document.getElementById('led-stby').className = 'led' + (dir === 'STBY' ? ' active-stby' : '');
+
+    // ── Faktoren ──────────────────────────────────────────────────────────
+    const ilimPct = ((r.factorILim ?? 1) * 100).toFixed(0);
+    const ovpPct  = ((r.factorOVP  ?? 1) * 100).toFixed(0);
+    const ilimEl  = document.getElementById('lbl-factor-ilim');
+    const ovpEl   = document.getElementById('lbl-factor-ovp');
+    ilimEl.textContent = `ILim: ${ilimPct}%`;
+    ilimEl.style.color = ilimPct < 100 ? '#fb923c' : '#6b7280';
+    ovpEl.textContent  = `OVP: ${ovpPct}%`;
+    ovpEl.style.color  = ovpPct  < 100 ? '#f87171' : '#6b7280';
+}
+
+['sl-vIn','sl-vOut','sl-pRef','sl-kDroop'].forEach(id =>
+    document.getElementById(id).addEventListener('input', updateDemo)
+);
+updateDemo();
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SZENARIEN
+// ═══════════════════════════════════════════════════════════════════════
+const scenarios = {
+    droop_fwd: { vIn: 46, vOut: 25, pRef:   0, kDroop:  5, desc: 'Droop FWD — leichte Unterspannung In, normaler Betrieb' },
+    droop_rev: { vIn: 50, vOut: 23, pRef:   0, kDroop:  5, desc: 'Droop REV — Überspannung In → Rückspeisung' },
+    vband_in:  { vIn: 35, vOut: 24, pRef:   0, kDroop:  5, desc: 'V-Band In — vIn weit unter vNomIn (vBandIn=10%)' },
+    vband_out: { vIn: 48, vOut: 30, pRef:   0, kDroop:  5, desc: 'V-Band Out — vOut weit über vNomOut' },
+    plimit:    { vIn: 42, vOut: 24, pRef: 400, kDroop:  1, desc: 'P-Limit — hohe Droopsteifigkeit + hoher pRef → Nennleistungsgrenze' },
+    ovp:       { vIn: 59, vOut: 24, pRef:   0, kDroop:  5, desc: 'OVP — vIn > vNomIn*(1+20%) = 57.6V → Abschaltung' },
+    ilim:      { vIn: 10, vOut: 24, pRef: 300, kDroop:  5, desc: 'ILim — sehr niedrige vIn → hoher Eingangsstrom' },
+    stby:      { vIn: 48, vOut: 24, pRef:   0, kDroop: 30, desc: 'Standby — Nennpunkt, kDroop groß → pAct≈0' },
+};
+
+function runScenario(key) {
+    const s = scenarios[key];
+    document.getElementById('sl-vIn').value    = s.vIn;
+    document.getElementById('sl-vOut').value   = s.vOut;
+    document.getElementById('sl-pRef').value   = s.pRef;
+    document.getElementById('sl-kDroop').value = s.kDroop;
+    updateDemo();
+
+    const r    = demoBlock._calc(s.vIn, s.vOut);
+    const loss = demoBlock._applyLoss(r.pAct);
+    const log  = document.getElementById('scenario-log');
+    log.innerHTML =
+        `<b style="color:#30a8c8">${key.toUpperCase()}</b>  ${s.desc}<br>` +
+        `vIn=${s.vIn}V  vOut=${s.vOut}V  pRef=${s.pRef}W  kDroop=${s.kDroop}%<br>` +
+        `→ pIn=${(-loss.in).toFixed(1)}W  pOut=${loss.out.toFixed(1)}W  ` +
+        `ILim=${(r.factorILim*100).toFixed(1)}%  OVP=${(r.factorOVP*100).toFixed(1)}%  ` +
+        `<b style="color:#fbbf24">Modus: ${demoBlock._modeString(r.pAct, r.factorOVP, r.factorILim, r.pLimitActive, r.bandActive)}</b>`;
+}
+</script>
+</body>
+</html>
