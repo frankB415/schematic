@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Lastfluss Demo6 — AC Trafo</title>
+<link rel="stylesheet" href="/schematic/schematicBlock/schematicBlock.css">
+<link rel="stylesheet" href="/schematic/demo.css">
+</head>
+<body>
+
+<h1>Lastfluss Demo6 — AC Lastfluss: Quelle · Trafo · Last</h1>
+<p class="subtitle">
+  k1: Spannungsquelle 400V L-L &nbsp;|&nbsp;
+  k2: Trafo-Sekundär + Widerstandslast &nbsp;|&nbsp;
+  Drehstrom, Leiter-Leiter-Spannungen
+</p>
+
+<div id="schematic" style="width:400px; height:400px;"></div>
+<div id="log"></div>
+
+<script src="/schematic/schematicBlock/schematicBlock.js"></script>
+<script src="/schematic/labeledBlock/labeledBlock.js"></script>
+<script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/wireBlocks.js"></script>
+<script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
+<script src="/schematic/lastflussKomplexBlock/lastflussKomplexBlock.js"></script>
+<script src="/schematic/lastflussKomplexBlock/spannungsquelle.js"></script>
+<script src="/schematic/lastflussKomplexBlock/trafo.js"></script>
+<script src="/schematic/lastflussKomplexBlock/widerstandsLast.js"></script>
+<script src="/schematic/simulator/baseSim.js"></script>
+<script src="/schematic/simulator/nodeBaseSim.js"></script>
+<script src="/schematic/simulator/lastflussKomplexSim.js"></script>
+
+<script>
+
+const logEl = document.getElementById('log');
+function log(msg, cls = '') {
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = msg;
+    logEl.appendChild(d);
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── Blöcke ───────────────────────────────────────────────────────────────────
+//
+//  Layout (vertikal, zentriert):
+//
+//  [Spannungsquelle]   x=170, y=60
+//         | out (k1, 400V L-L)
+//  [Trafo]             x=170, y=190
+//         | out (k2, 230V L-L)
+//  [WiderstandsLast]   x=170, y=320
+//
+
+const quelle = new Spannungsquelle('Quelle', {
+    uNom: 400, skNom: 5e6,
+    x: 170, y: 60,
+});
+
+const trafo = new Trafo('TR1', {
+    u1Nenn: 400, u2Nenn: 230, sNenn: 100e3, uk: 4,
+    x: 170, y: 190,
+});
+
+const last = new WiderstandsLast('Last', {
+    uNenn: 230, pNom: 50e3,
+    x: 170, y: 320,
+});
+
+// ── Render ───────────────────────────────────────────────────────────────────
+const schematic = document.getElementById('schematic');
+quelle.render(schematic);
+trafo.render(schematic);
+last.render(schematic);
+const blocks = [quelle, trafo, last];
+
+const connections = [
+    { id: 'k1', from: 'Quelle.out', to: 'TR1.in',  uMin: 350, uMax: 450 },
+    { id: 'k2', from: 'TR1.out',    to: 'Last.in',  uMin: 180, uMax: 280 },
+];
+
+const sim = new lastflussKomplexSim(blocks, connections, { epsilon: 100, scanSteps: 8, logging: true });
+
+// ── Simulation ───────────────────────────────────────────────────────────────
+
+requestAnimationFrame(() => {
+    wireBlocks(schematic, blocks, connections, { wireColor: '#a0c0ff' });
+    log('Routing OK');
+
+    const { voltages, converged, iterations } = sim.solve();
+
+    const k1 = voltages.get('k1');
+    const k2 = voltages.get('k2');
+    const fmt = v => {
+        if (!v) return '?';
+        const abs = Math.sqrt(v.re**2 + v.im**2) / 1000;
+        const phi = Math.atan2(v.im, v.re) * 180 / Math.PI;
+        return `${abs.toFixed(3)} kV ∠ ${phi.toFixed(1)}°`;
+    };
+
+    log(`${converged ? '✓' : '⚠'} Konvergenz nach ${iterations} Iterationen`, converged ? '' : 'warn');
+    log(`k1 (Primär):   U = ${fmt(k1)}`);
+    log(`k2 (Sekundär): U = ${fmt(k2)}`);
+});
+
+</script>
+</body>
+</html>
