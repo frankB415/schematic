@@ -52,22 +52,17 @@ class WiderstandsLast extends lastflussKomplexBlock {
     }
 
     applyOperatingPoint(voltages) {
-        const u             = toC(voltages.in ?? { re: this.getParam('uNenn'), im: 0 });
-        const { in: s }     = this.calcPower(voltages);
-        // Leiterstrom: I = P / (√3 · |U_LL|)
-        const iAbs          = Math.abs(s.re) / (Math.sqrt(3) * cAbs(u));
-
-        this._resultFormats = {
-            u:    v => `U: ${lastflussKomplexBlock.fmtPhasor(v)}`,
-            p:    v => `P: ${(v/1e3).toFixed(2)} kW`,
-            iAbs: v => `I: ${v.toFixed(1)} A`,
-        };
-        this._setResults({
-            u,
-            p:    Math.abs(s.re),
-            iAbs,
-        });
+        const u        = toC(voltages.in ?? { re: this.getParam('uNenn'), im: 0 });
+        const { in: s } = this.calcPower(voltages);
+        const iAbs     = Math.abs(s.re) / (Math.sqrt(3) * cAbs(u));
+        this.renderResults([
+            { key: 'u',    text: `U: ${lastflussKomplexBlock.fmtPhasor(u)}` },
+            { key: 'p',    text: `P: ${(Math.abs(s.re)/1e3).toFixed(2)} kW` },
+            { key: 'iAbs', text: `I: ${iAbs.toFixed(1)} A` },
+        ]);
     }
 }
 
 if (typeof window !== 'undefined') window.WiderstandsLast = WiderstandsLast;
+
+console.log('[widerstandsLast] Version 2026-06-07 build 1 (renderResults)');
