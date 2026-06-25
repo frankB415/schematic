@@ -6,8 +6,13 @@ Connector:
   out — unten mittig (Ausgang, Lastfluss nach unten)
 
 Parameter:
-  power  — Nennleistung in Wp
-  voc    — Leerlaufspannung in V
+  pNom  — Nennleistung in W  (am MPP)
+  voc   — Leerlaufspannung in V
+
+Kennlinie (MPP bei u_mpp = 0.9 * voc):
+  0     → u_mpp : linearer Anstieg auf pNom
+  u_mpp → voc   : quadratischer Abfall auf 0
+  u > voc        : 0 W
 */
 
 const SOLARPANEL_SVG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
@@ -54,48 +59,40 @@ class SolarPanel extends lastflussBlock {
         ];
 
         this.params = [
-            { key: 'pNom',     value: pNom,  format: v => `${v} Wp` },
-            { key: 'voc',         value: voc,   format: v => `${v} V`  },
-
+            { key: 'pNom', value: pNom, format: v => lastflussBlock.fmtKW(v) },
+            { key: 'voc',  value: voc,  format: v => lastflussBlock.fmtKV(v) },
         ];
     }
 
-    /**
-     * Vereinfachte PV-Kennlinie: quadratischer Abfall von power bei U=0 bis 0 bei U=Voc.
-     * Für U >= Voc: keine Einspeisung mehr.
-     */
     /**
      * PV-Kennlinie mit MPP bei u_mpp = 0.9 * voc:
      *   0 → u_mpp : linearer Anstieg auf pNom
      *   u_mpp → voc: quadratischer Abfall auf 0
      *   u > voc   : 0 W
      */
-    calcPower(voltages) {
-        const u     = Math.max(0, Math.min(this.voc, voltages.out ?? 0));
+    _calcP(u) {
+        const uc    = Math.max(0, Math.min(this.voc, u));
         const u_mpp = 0.9 * this.voc;
-        let p;
-        if (u <= u_mpp) {
-            p = this.pNom * u / u_mpp;
-        } else {
-            p = this.pNom * (1 - Math.pow((u - u_mpp) / (this.voc - u_mpp), 2));
-        }
-        return { out: p };
+        if (uc <= u_mpp) return this.pNom * uc / u_mpp;
+        return this.pNom * (1 - Math.pow((uc - u_mpp) / (this.voc - u_mpp), 2));
+    }
+
+    calcCurrent(voltages) {
+        const u  = voltages.out ?? this.voc * 0.9;
+        const p  = this._calcP(u);
+        const uc = Math.max(1, u);
+        // Einspeisung in Knoten → positiv
+        return { out: p / uc };
     }
 
     applyOperatingPoint(voltages) {
-        const power = this.calcPower(voltages).out;
-        const u     = voltages.out;
-        this._resultFormats = {
-            pAct: v => `pAct: ${v} W`,
-            uAct: v => `uAct: ${v} V`,
-        };
-        this._setResults({
-            pAct: Math.round(-power * 10) / 10,
-            uAct: Math.round(u * 100) / 100,
-        });
+        const u    = voltages.out ?? this.voc * 0.9;
+        const pAct = this._calcP(u);   // positiv = Einspeisung
+        this.renderResults([
+            { key: 'pAct', text: `P: ${lastflussBlock.fmtKW(pAct)}` },
+            { key: 'uAct', text: `U: ${lastflussBlock.fmtKV(u)}` },
+        ]);
     }
-
-
 }
 
 if (typeof window !== 'undefined') window.SolarPanel = SolarPanel;
