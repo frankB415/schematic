@@ -15,18 +15,20 @@
   Beide Panels mit internem MPPT-Tracker (konstante Leistung im Spannungsfenster)
 </p>
 
-<div id="schematic"></div>
+<div id="schematic" style="width:700px; height:520px; position: relative;"></div>
 <div id="log"></div>
 
 <script src="/schematic/schematicBlock/schematicBlock.js"></script>
 <script src="/schematic/labeledBlock/labeledBlock.js"></script>
 <script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/wireBlocks.js"></script>
 <script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
-<script src="/schematic/simulator/baseSim.js"></script>
-<script src="/schematic/simulator/lastflussSim.js"></script>
 <script src="/schematic/lastflussBlock/solarPanelMPPT.js"></script>
 <script src="/schematic/lastflussBlock/last.js"></script>
 <script src="/schematic/lastflussBlock/dcdc.js"></script>
+<script src="/schematic/simulator/baseSim.js"></script>
+<script src="/schematic/simulator/nodeBaseSim.js"></script>
+<script src="/schematic/simulator/lastflussKomplexSim.js"></script>
 
 <script type="module">
 
@@ -64,59 +66,32 @@ mppt1.render(schematic);
 dcdc.render(schematic);
 last1.render(schematic);
 mppt2.render(schematic);
+const blocks = [mppt1, dcdc, mppt2, last1];
+
+const connections = [
+    { id: 'k1', from: 'MPPT1.out', to: 'DCDC1.in',  uMin: 20, uMax: 40 },
+    { id: 'k2', from: 'MPPT2.out', to: 'Last1.in',  uMin: 20, uMax: 40 },
+    { id: 'k2', from: 'DCDC1.out', to: 'Last1.in',  uMin: 20, uMax: 40 },
+];
+
+const sim = new lastflussKomplexSim(blocks, connections, { logging: true, epsilon: 0.5 });
 
 // ── Routing ──────────────────────────────────────────────────────────────────
 requestAnimationFrame(() => {
-
-  const connectors = [
-    ...mppt1.getConnectorPositions(schematic, 'mppt1'),
-    ...dcdc.getConnectorPositions(schematic,  'dcdc'),
-    ...mppt2.getConnectorPositions(schematic, 'mppt2'),
-    ...last1.getConnectorPositions(schematic, 'last1'),
-  ];
-
-  const connections = [
-    { id: 'net-k1',      from: 'mppt1.out', to: 'dcdc.in'  },
-    { id: 'net-k2-mppt', from: 'mppt2.out', to: 'last1.in' },
-    { id: 'net-k2-dcdc', from: 'dcdc.out',  to: 'last1.in' },
-  ];
-
-  const blocked = [mppt1, dcdc, mppt2, last1].map(b => b.getImageDiv());
-
   try {
-    const wire = new ElectricalWire(schematic, {
-      gridSize: 10, wireColor: '#7ecfff', wireWidth: 1.5, logging: false,
-    });
-    wire.setConnectors(connectors);
-    wire.setConnections(connections);
-    wire.setBlockedAreas(blocked, { shrink: 5 });
-    wire.render();
+    wireBlocks(schematic, blocks, connections, { wireColor: '#7ecfff' });
     log('Routing OK');
   } catch(e) {
     log('Routing Fehler: ' + e.message, 'err');
     console.error(e);
-    return;
   }
 
-  // ── Simulation ──────────────────────────────────────────────────────────
-  const sim = new lastflussSim([
-    { id: 'k1', blocks: [mppt1, dcdc] },
-    { id: 'k2', blocks: [mppt2, last1, dcdc] },
-  ], { logging: true, epsilon: 15 });
-
-  const result = sim.solve();
-
-  if (result.converged) {
-    const u1  = result.voltages.get('k1').toFixed(2);
-    const u2  = result.voltages.get('k2').toFixed(2);
-    const pm1 = result.powers.get(mppt1)?.out?.toFixed(1) ?? '?';
-    const pm2 = result.powers.get(mppt2)?.out?.toFixed(1) ?? '?';
-    const pl  = result.powers.get(last1)?.in?.toFixed(1)  ?? '?';
-    const pd  = result.powers.get(dcdc)?.out?.toFixed(1)  ?? '?';
-    log(`Simulation OK (${result.iterations} Iter): U1=${u1}V U2=${u2}V | ` +
-        `MPPT1=${pm1}W MPPT2=${pm2}W Last=${pl}W DCDC.out=${pd}W`);
-  } else {
-    log('Simulation nicht konvergiert!', 'warn');
+  try {
+    const result = sim.solve();
+    log(`${result.converged ? '✓' : '⚠'} Konvergenz nach ${result.iterations} Iterationen`, result.converged ? '' : 'warn');
+  } catch(e) {
+    log(`Solver Fehler: ${e.message}`, 'err');
+    console.error(e);
   }
 });
 
