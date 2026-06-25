@@ -92,10 +92,10 @@ class SolarPanelMPPT extends lastflussBlock {
     applyOperatingPoint(voltages) {
         const u    = voltages.out ?? 0;
         const pAct = this.calcPower(voltages).out;
-        this._setResults({
-            pAct: Math.round(pAct * 10) / 10,
-            uAct: Math.round(u    * 100) / 100,
-        });
+        this.renderResults([
+            { key: 'pAct', text: `pAct: ${pAct.toFixed(1)} W` },
+            { key: 'uAct', text: `uAct: ${u.toFixed(2)} V` },
+        ]);
     }
 }
 
