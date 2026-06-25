@@ -158,4 +158,17 @@ DOM-Struktur:
 }
 
 .sb-context-menu__param-label { color: #555; font-size: 0.8rem; white-space: nowrap; }
-.sb-context-menu__param-input { width: 70px; font-size: 0.8rem; padding: 2px 4px; border: 1px solid #ccc; border-radius: 3px; text-align: right; }
+.sb-context-menu__param-input { width: 140px; font-size: 0.8rem; padding: 2px 4px; border: 1px solid #ccc; border-radius: 3px; text-align: right; }
+
+/* ── Demo-Controls ─────────────────────────────────────────────────────────── */
+
+.sb-demo-input {
+    width: 52px;
+    background: #1e1e3a;
+    border: 1px solid #3a3a6a;
+    color: #ccc;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+    text-align: right;
+}
