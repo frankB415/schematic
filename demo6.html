@@ -21,12 +21,14 @@
 <script src="/schematic/schematicBlock/schematicBlock.js"></script>
 <script src="/schematic/labeledBlock/labeledBlock.js"></script>
 <script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/wireBlocks.js"></script>
 <script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
 <script src="/schematic/lastflussKomplexBlock/lastflussKomplexBlock.js"></script>
 <script src="/schematic/lastflussKomplexBlock/spannungsquelle.js"></script>
 <script src="/schematic/lastflussKomplexBlock/trafo.js"></script>
 <script src="/schematic/lastflussKomplexBlock/widerstandsLast.js"></script>
 <script src="/schematic/simulator/baseSim.js"></script>
+<script src="/schematic/simulator/nodeBaseSim.js"></script>
 <script src="/schematic/simulator/lastflussKomplexSim.js"></script>
 
 <script>
@@ -52,12 +54,12 @@ function log(msg, cls = '') {
 //
 
 const quelle = new Spannungsquelle('Quelle', {
-    uLL: 400, sk: 5e6, xrVerhaeltnis: 10,
+    uNom: 400, skNom: 5e6,
     x: 170, y: 60,
 });
 
 const trafo = new Trafo('TR1', {
-    u1Nenn: 400, u2Nenn: 230, sNenn: 100e3, ukPct: 4,
+    u1Nenn: 400, u2Nenn: 230, sNenn: 100e3, uk: 4,
     x: 170, y: 190,
 });
 
@@ -71,86 +73,35 @@ const schematic = document.getElementById('schematic');
 quelle.render(schematic);
 trafo.render(schematic);
 last.render(schematic);
+const blocks = [quelle, trafo, last];
+
+const connections = [
+    { id: 'k1', from: 'Quelle.out', to: 'TR1.in',  uMin: 350, uMax: 450 },
+    { id: 'k2', from: 'TR1.out',    to: 'Last.in',  uMin: 180, uMax: 280 },
+];
+
+const sim = new lastflussKomplexSim(blocks, connections, { epsilon: 100, scanSteps: 8, logging: true });
 
 // ── Simulation ───────────────────────────────────────────────────────────────
-const sim = new lastflussKomplexSim([
-    { id: 'k1', blocks: [quelle, trafo],  uMin: 100, uMax: 600 },
-    { id: 'k2', blocks: [trafo,  last],   uMin: 50,  uMax: 400 },
-], { epsilon: 100, logging: true });
 
 requestAnimationFrame(() => {
+    wireBlocks(schematic, blocks, connections, { wireColor: '#a0c0ff' });
+    log('Routing OK');
 
-    // ── Wires ─────────────────────────────────────────────────────────────────
-    const connectors = [
-        ...quelle.getConnectorPositions(schematic, 'quelle'),
-        ...trafo.getConnectorPositions(schematic,  'trafo'),
-        ...last.getConnectorPositions(schematic,   'last'),
-    ];
+    const { voltages, converged, iterations } = sim.solve();
 
-    const connections = [
-        { id: 'k1', from: 'quelle.out', to: 'trafo.in'  },
-        { id: 'k2', from: 'trafo.out',  to: 'last.in'   },
-    ];
+    const k1 = voltages.get('k1');
+    const k2 = voltages.get('k2');
+    const fmt = v => {
+        if (!v) return '?';
+        const abs = Math.sqrt(v.re**2 + v.im**2) / 1000;
+        const phi = Math.atan2(v.im, v.re) * 180 / Math.PI;
+        return `${abs.toFixed(3)} kV ∠ ${phi.toFixed(1)}°`;
+    };
 
-    const blocked = [quelle, trafo, last].map(b => b.getImageDiv());
-
-    try {
-        const wire = new ElectricalWire(schematic, {
-            gridSize: 10, wireColor: '#a0c0ff', wireWidth: 1.5,
-        });
-        wire.setConnectors(connectors);
-        wire.setConnections(connections);
-        wire.setBlockedAreas(blocked, { shrink: 5 });
-        wire.render();
-        log('Routing OK');
-    } catch(e) {
-        log(`Routing Fehler: ${e.message}`, 'err');
-    }
-
-    // ── Solve ─────────────────────────────────────────────────────────────────
-    try {
-        const { voltages, converged, iterations } = sim.solve();
-
-        const k1 = voltages.get('k1');
-        const k2 = voltages.get('k2');
-        const fmt = v => {
-            if (!v) return '?';
-            const abs = Math.sqrt(v.re**2 + v.im**2) / 1000;
-            const phi = Math.atan2(v.im, v.re) * 180 / Math.PI;
-            return `${abs.toFixed(3)} kV ∠ ${phi.toFixed(1)}°`;
-        };
-
-        log(`${converged ? '✓' : '⚠'} Konvergenz nach ${iterations} Iterationen`, converged ? '' : 'warn');
-        log(`k1 (Primär):   U = ${fmt(k1)}`);
-        log(`k2 (Sekundär): U = ${fmt(k2)}`);
-
-        // Residual-Debug
-        log('── Newton Debug ──');
-        const xFinal = [k1.re, k1.im, k2.re, k2.im];
-        const F = sim._residual(xFinal);
-        log(`F = [${F.map(v=>v.toFixed(1)).join(', ')}] W`);
-        log(`|F| = ${Math.sqrt(F.reduce((s,v)=>s+v*v,0)).toFixed(1)} W`);
-        const rel = sim._relResidual(F, xFinal);
-        log(`relResidual = ${rel.toFixed(1)}%`);
-
-        // Block-Ergebnisse
-        log('── Blockergebnisse ──');
-        [
-            ['Quelle', quelle],
-            ['Trafo',  trafo],
-            ['Last',   last],
-        ].forEach(([name, block]) => {
-            log(`${name}:`);
-            Object.entries(block.results || {}).forEach(([key, val]) => {
-                const fmt2 = block._resultFormats?.[key];
-                const str  = fmt2 ? fmt2(val) : JSON.stringify(val);
-                log(`  ${str}`);
-            });
-        });
-    } catch(e) {
-        log(`Solver Fehler: ${e.message}`, 'err');
-        console.error(e);
-    }
+    log(`${converged ? '✓' : '⚠'} Konvergenz nach ${iterations} Iterationen`, converged ? '' : 'warn');
+    log(`k1 (Primär):   U = ${fmt(k1)}`);
+    log(`k2 (Sekundär): U = ${fmt(k2)}`);
 });
 
 </script>
