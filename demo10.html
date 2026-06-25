@@ -33,6 +33,7 @@
 <script src="/schematic/schematicBlock/schematicBlock.js"></script>
 <script src="/schematic/labeledBlock/labeledBlock.js"></script>
 <script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/wireBlocks.js"></script>
 <script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
 <script src="/schematic/lastflussBlock/last.js"></script>
 <script src="/schematic/lastflussKomplexBlock/lastflussKomplexBlock.js"></script>
@@ -41,7 +42,6 @@
 <script src="/schematic/lastflussKomplexBlock/trafoGleichrichter.js"></script>
 <script src="/schematic/simulator/baseSim.js"></script>
 <script src="/schematic/simulator/nodeBaseSim.js"></script>
-<script src="/schematic/simulator/lastflussSim.js"></script>
 <script src="/schematic/simulator/lastflussKomplexSim.js"></script>
 
 <script>
@@ -70,7 +70,7 @@ const kabel = new ACKabel('ACKabel', {
 
 // Trafo: 20kV → 400V, 1.2MVA, uk=6%
 const trafoGr = new TrafoGleichrichter('TR-GR', {
-    u1Nenn: 20000, u2Nenn: 400, sNenn: 1.2e6, ukPct: 6,
+    u1Nenn: 20000, u2Nenn: 400, sNenn: 1.2e6, uk: 6,
     x: 170, y: 340,
 });
 
@@ -93,38 +93,21 @@ last.render(schematic);
 //  k2   — AC nach Kabel: Kabel(out) + TrafoGR(in)
 //  k_dc — DC: TrafoGR(out) + Last(in)
 //
-const sim = new lastflussKomplexSim([
-    { id: 'k1',   blocks: [quelle, kabel],    uMin: 19500, uMax: 20500 },
-    { id: 'k2',   blocks: [kabel, trafoGr],   uMin: 19000, uMax: 20500 },
-    { id: 'k_dc', blocks: [trafoGr, last],    uMin: 400,   uMax: 530   },
-], { epsilon: 100, scanSteps: 8, logging: true });
+const blocks = [quelle, kabel, trafoGr, last];
+
+const connections = [
+    { id: 'k1',   from: 'Quelle.out',  to: 'ACKabel.in',  uMin: 19500, uMax: 20500 },
+    { id: 'k2',   from: 'ACKabel.out', to: 'TR-GR.in',    uMin: 19000, uMax: 20500 },
+    { id: 'k_dc', from: 'TR-GR.out',   to: 'Last.in',     uMin: 400,   uMax: 530   },
+];
+
+const sim = new lastflussKomplexSim(blocks, connections, { epsilon: 100, scanSteps: 8, logging: true });
 
 requestAnimationFrame(() => {
 
     // ── Wires ─────────────────────────────────────────────────────────────────
-    const connectors = [
-        ...quelle.getConnectorPositions(schematic,  'quelle'),
-        ...kabel.getConnectorPositions(schematic,   'kabel'),
-        ...trafoGr.getConnectorPositions(schematic, 'trafogr'),
-        ...last.getConnectorPositions(schematic,    'last'),
-    ];
-
-    const connections = [
-        { id: 'k1',   from: 'quelle.out',  to: 'kabel.in'    },
-        { id: 'k2',   from: 'kabel.out',   to: 'trafogr.in'  },
-        { id: 'k_dc', from: 'trafogr.out', to: 'last.in'     },
-    ];
-
-    const blocked = [quelle, kabel, trafoGr, last].map(b => b.getImageDiv());
-
     try {
-        const wire = new ElectricalWire(schematic, {
-            gridSize: 10, wireColor: '#a0c0ff', wireWidth: 1.5,
-        });
-        wire.setConnectors(connectors);
-        wire.setConnections(connections);
-        wire.setBlockedAreas(blocked, { shrink: 5 });
-        wire.render();
+        wireBlocks(schematic, blocks, connections);
         log('Routing OK');
     } catch(e) {
         log(`Routing Fehler: ${e.message}`, 'err');
