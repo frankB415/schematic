@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Lastfluss Demo11 — Trafo + Gleichrichter getrennt</title>
+<link rel="stylesheet" href="/schematic/schematicBlock/schematicBlock.css">
+<link rel="stylesheet" href="/schematic/demo.css">
+</head>
+<body>
+
+<h1>Lastfluss Demo11 — Trafo + Gleichrichter als getrennte Blöcke</h1>
+<p class="subtitle">
+  k1: Quelle 400V &nbsp;|&nbsp;
+  k_u2: AC nach Trafo (400V-Seite) &nbsp;|&nbsp;
+  k_dc: DC-Knoten &nbsp;|&nbsp;
+  Vergleich mit demo8: gleiche Parameter, getrennte Blöcke
+</p>
+
+<!--
+  Layout:
+
+  [Quelle]    x=170, y=60
+      | k1
+  [Trafo]     x=170, y=190
+      | k_u2
+  [Gleichrichter]  x=170, y=330
+      | k_dc
+  [Last]      x=170, y=460
+-->
+<div id="schematic" style="width:400px; height:580px; position: relative;"></div>
+<div id="log"></div>
+
+<script src="/schematic/schematicBlock/schematicBlock.js"></script>
+<script src="/schematic/labeledBlock/labeledBlock.js"></script>
+<script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/wireBlocks.js"></script>
+<script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
+<script src="/schematic/lastflussBlock/last.js"></script>
+<script src="/schematic/lastflussKomplexBlock/lastflussKomplexBlock.js"></script>
+<script src="/schematic/lastflussKomplexBlock/spannungsquelle.js"></script>
+<script src="/schematic/lastflussKomplexBlock/trafo.js"></script>
+<script src="/schematic/lastflussKomplexBlock/gleichrichter.js"></script>
+<script src="/schematic/simulator/baseSim.js"></script>
+<script src="/schematic/simulator/nodeBaseSim.js"></script>
+<script src="/schematic/simulator/lastflussKomplexSim.js"></script>
+
+<script>
+
+const logEl = document.getElementById('log');
+function log(msg, cls = '') {
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = msg;
+    logEl.appendChild(d);
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── Blöcke ───────────────────────────────────────────────────────────────────
+
+const quelle = new Spannungsquelle('Quelle', {
+    uNom: 400, skNom: 5e6,
+    x: 170, y: 60,
+});
+
+// Trafo: 400V/230V, 100kVA, uk=4% — identisch zu demo8
+const trafo = new Trafo('Trafo', {
+    u1Nenn: 400, u2Nenn: 230, sNenn: 100e3, uk: 4,
+    x: 170, y: 190,
+});
+
+// Gleichrichter: 230V AC → DC
+const gleichrichter = new Gleichrichter('GR', {
+    u1Nenn: 230, pNom: 20e3, eta: 0.98,
+    x: 170, y: 330,
+});
+
+// DC-Last: 20kW, aktiv 280–340V
+const last = new Last('Last', {
+    pNom: 20e3, uMin: 280, uMax: 340,
+    x: 170, y: 460,
+});
+
+// ── Render ───────────────────────────────────────────────────────────────────
+const schematic = document.getElementById('schematic');
+quelle.render(schematic);
+trafo.render(schematic);
+gleichrichter.render(schematic);
+last.render(schematic);
+
+// ── Simulation ───────────────────────────────────────────────────────────────
+//
+//  k1   — AC 400V:  Quelle + Trafo(in)
+//  k_u2 — AC 230V:  Trafo(out) + Gleichrichter(in)   ← neuer Knoten
+//  k_dc — DC ~310V: Gleichrichter(out) + Last(in)
+//
+const blocks = [quelle, trafo, gleichrichter, last];
+
+const connections = [
+    { id: 'k1',   from: 'Quelle.out', to: 'Trafo.in', uMin: 350, uMax: 450 },
+    { id: 'k_u2', from: 'Trafo.out',  to: 'GR.in',    uMin: 180, uMax: 280 },
+    { id: 'k_dc', from: 'GR.out',     to: 'Last.in',  uMin: 260, uMax: 315 },
+];
+
+const sim = new lastflussKomplexSim(blocks, connections, { epsilon: 50, scanSteps: 8, logging: true });
+
+requestAnimationFrame(() => {
+
+    // ── Wires ─────────────────────────────────────────────────────────────────
+    try {
+        wireBlocks(schematic, blocks, connections);
+        log('Routing OK');
+    } catch(e) {
+        log(`Routing Fehler: ${e.message}`, 'err');
+    }
+
+    // ── Solve ─────────────────────────────────────────────────────────────────
+    try {
+        const result = sim.solve();
+        log(`${result.converged ? '✓' : '⚠'} Konvergenz nach ${result.iterations} Iterationen`, result.converged ? '' : 'warn');
+    } catch(e) {
+        log(`Solver Fehler: ${e.message}`, 'err');
+        console.error(e);
+    }
+});
+
+</script>
+</body>
+</html>
