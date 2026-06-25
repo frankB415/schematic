@@ -1,58 +1,55 @@
 /*
-dcdc.js — Schaltplan-Block: DC/DC-Wandler (Lastflussanalyse)
-Ableitung von lastflussBlock
-
-Connectoren:
-  in  — oben mittig  (Eingang,  Knoten 1)
-  out — unten mittig (Ausgang,  Knoten 2)
-
-Kopplung ueber couplingImpedance:
-  pAct     = (vIn/vNomIn - vOut/vNomOut) * pNom * couplingImpedance
-  pVerlust = |pAct| * (1 - eta)
-  sign     = Vorzeichen von pAct (Energieflussrichtung)
-  in:  -(pAct + sign*pVerlust)   // abgebende Seite trägt Verluste
-  out:   pAct - sign*pVerlust    // empfangende Seite erhält weniger
-  P_out = P_in * eta
-
-Parameter:
-  vNomIn            — Nennspannung Eingang  (default: 48)
-  vNomOut           — Nennspannung Ausgang  (default: 24)
-  eta               — Wirkungsgrad 0..1     (default: 0.95)
-  pNom              — Nennleistung in W (default: 500)
-  couplingImpedance — Steifigkeit der Kopplung           (default: 20)
+dcdc.js — Ableitung von lastflussBlock
 */
-
 const DCDC_SVG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
 `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 80">
-  <rect x="4" y="4" width="52" height="72" rx="4"
-        fill="#1a1a2e" stroke="#c8a030" stroke-width="1.5"/>
-  <line x1="30" y1="14" x2="30" y2="42" stroke="#c8a030" stroke-width="2"/>
-  <polygon points="30,50 24,38 36,38" fill="#c8a030"/>
-  <text x="30" y="66" text-anchor="middle" fill="#c8a030"
-        font-size="9" font-family="monospace">DC/DC</text>
+  <!-- Hintergrund -->
+  <rect x="4" y="4" width="52" height="72" rx="4" fill="#1a1a2e" stroke="#c0a080" stroke-width="1.5"/>
+  <!-- Anschlusslinien oben/unten -->
+  <line x1="30" y1="0"  x2="30" y2="14" stroke="#c0a080" stroke-width="2"/>
+  <line x1="30" y1="66" x2="30" y2="80" stroke="#c0a080" stroke-width="2"/>
+  <!-- Gehäuse (Konverter-Symbol) -->
+  <rect x="12" y="18" width="36" height="44" rx="0"
+        fill="none" stroke="#c0a080" stroke-width="1.5"/>
+  <!-- Diagonale -->
+  <line x1="12" y1="62" x2="48" y2="18" stroke="#c0a080" stroke-width="1.5"/>
+  <!-- Eingangsseite: zwei Gleichstromlinien (oben links) -->
+  <line x1="16" y1="28" x2="26" y2="28" stroke="#c0a080" stroke-width="1.5"/>
+  <line x1="16" y1="33" x2="26" y2="33" stroke="#c0a080" stroke-width="1.5"/>
+  <!-- Ausgangsseite: zwei Gleichstromlinien (unten rechts) -->
+  <line x1="34" y1="47" x2="44" y2="47" stroke="#c0a080" stroke-width="1.5"/>
+  <line x1="34" y1="52" x2="44" y2="52" stroke="#c0a080" stroke-width="1.5"/>
 </svg>`);
 
 class DCDC extends lastflussBlock {
 
-    constructor(label, { vNomIn = 48, vNomOut = 24, eta = 0.95, pNom = 500, couplingImpedance = 20, x = null, y = null } = {}) {
-        super({ x, y, imageW: 60, imageH: 80, imageSrc: DCDC_SVG });
-        this._label = label;
-        this.vNomIn            = vNomIn;
-        this.vNomOut           = vNomOut;
-        this.eta               = eta;
-        this.pNom              = pNom;
-        this.couplingImpedance = couplingImpedance;
+    static interfaceVersion = 2;
 
+    static defaultOpts = {
+        vNomIn: 48,
+        vNomOut: 24,
+        eta: 0.95,
+        pNom: 500,
+        couplingImpedance: 20,
+        x: null,
+        y: null,
+    };
+
+    constructor(label, opts = {}) {
+        const o = lastflussBlock.resolveOpts(DCDC, opts);
+        super({ x: o.x, y: o.y, imageW: 60, imageH: 80, imageSrc: DCDC_SVG });
+        this._label = label;
+        Object.assign(this, o);
         this.connectors = [
             { name: 'in',  x: '50%', y: '0%',   type: 'electrical', direction: 'up',   minLength: 24 },
             { name: 'out', x: '50%', y: '100%',  type: 'electrical', direction: 'down', minLength: 24 },
         ];
-
         this.params = [
-            { key: 'vNomIn',  value: vNomIn,  format: v => `${v} V` },
-            { key: 'vNomOut',  value: vNomOut, format: v => `${v} V` },
-            { key: 'eta', value: eta,    format: v => `${v}`    },
-            { key: 'pNom',       value: pNom,   format: v => `${v} W`  },
+            { key: 'vNomIn',  value: o.vNomIn,  format: v => lastflussBlock.fmtKV(v) },
+            { key: 'vNomOut', value: o.vNomOut, format: v => lastflussBlock.fmtKV(v) },
+            { key: 'eta',     value: o.eta,     format: v => `${(v*100).toFixed(1)} %`  },
+            { key: 'pNom',             value: o.pNom,             format: v => lastflussBlock.fmtKW(v)      },
+            { key: 'couplingImpedance', value: o.couplingImpedance, format: v => `${v} pu`                  },
         ];
     }
 
@@ -62,27 +59,20 @@ class DCDC extends lastflussBlock {
         let p = (uIn / this.vNomIn - uOut / this.vNomOut) * this.pNom * this.couplingImpedance;
         p = Math.max(-this.pNom, Math.min(this.pNom, p));
         const pVerlust = Math.abs(p) * (1 - this.eta);
-        const sign = Math.sign(p) || 1;
-        // Verluste werden auf der abgebenden Seite abgezogen
-        return { in: -(p + sign * pVerlust), out: p - sign * pVerlust };
+        return { in: -(p + pVerlust), out: p };
     }
 
     applyOperatingPoint(voltages) {
         const { in: pIn, out: pOut } = this.calcPower(voltages);
-        this._resultFormats = {
-            pIn:  v => `pIn:  ${v} W`,
-            pOut: v => `pOut: ${v} W`,
-            uIn:  v => `uIn:  ${v} V`,
-            uOut: v => `uOut: ${v} V`,
-        };
-        this._setResults({
-            pIn:  Math.round(pIn * 10) / 10,
-            pOut: Math.round(pOut          * 10) / 10,
-            uIn:  Math.round((voltages.in  ?? 0) * 100) / 100,
-            uOut: Math.round((voltages.out ?? 0) * 100) / 100,
-        });
+        const uIn  = voltages.in  ?? 0;
+        const uOut = voltages.out ?? 0;
+        this.renderResults([
+            { key: 'pIn',  text: `pIn:  ${lastflussBlock.fmtKW(-pIn)}` },
+            { key: 'pOut', text: `pOut: ${lastflussBlock.fmtKW(pOut)}` },
+            { key: 'uIn',  text: `uIn:  ${lastflussBlock.fmtKV(uIn)}` },
+            { key: 'uOut', text: `uOut: ${lastflussBlock.fmtKV(uOut)}` },
+        ]);
     }
-
 }
 
 if (typeof window !== 'undefined') window.DCDC = DCDC;
