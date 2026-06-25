@@ -33,6 +33,7 @@
 <script src="/schematic/schematicBlock/schematicBlock.js"></script>
 <script src="/schematic/labeledBlock/labeledBlock.js"></script>
 <script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/wireBlocks.js"></script>
 <script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
 <script src="/schematic/lastflussBlock/last.js"></script>
 <script src="/schematic/lastflussKomplexBlock/lastflussKomplexBlock.js"></script>
@@ -41,7 +42,6 @@
 <script src="/schematic/lastflussKomplexBlock/gleichrichter.js"></script>
 <script src="/schematic/simulator/baseSim.js"></script>
 <script src="/schematic/simulator/nodeBaseSim.js"></script>
-<script src="/schematic/simulator/lastflussSim.js"></script>
 <script src="/schematic/simulator/lastflussKomplexSim.js"></script>
 
 <script>
@@ -64,7 +64,7 @@ const quelle = new Spannungsquelle('Quelle', {
 
 // Trafo: 400V/230V, 100kVA, uk=4% — identisch zu demo8
 const trafo = new Trafo('Trafo', {
-    u1Nenn: 400, u2Nenn: 230, sNenn: 100e3, ukPct: 4,
+    u1Nenn: 400, u2Nenn: 230, sNenn: 100e3, uk: 4,
     x: 170, y: 190,
 });
 
@@ -93,38 +93,21 @@ last.render(schematic);
 //  k_u2 — AC 230V:  Trafo(out) + Gleichrichter(in)   ← neuer Knoten
 //  k_dc — DC ~310V: Gleichrichter(out) + Last(in)
 //
-const sim = new lastflussKomplexSim([
-    { id: 'k1',   blocks: [quelle, trafo],           uMin: 350, uMax: 450 },
-    { id: 'k_u2', blocks: [trafo, gleichrichter],    uMin: 180, uMax: 280 },
-    { id: 'k_dc', blocks: [gleichrichter, last],     uMin: 0,   uMax: 315 },
-], { epsilon: 50, scanSteps: 8, logging: true });
+const blocks = [quelle, trafo, gleichrichter, last];
+
+const connections = [
+    { id: 'k1',   from: 'Quelle.out', to: 'Trafo.in', uMin: 350, uMax: 450 },
+    { id: 'k_u2', from: 'Trafo.out',  to: 'GR.in',    uMin: 180, uMax: 280 },
+    { id: 'k_dc', from: 'GR.out',     to: 'Last.in',  uMin: 260, uMax: 315 },
+];
+
+const sim = new lastflussKomplexSim(blocks, connections, { epsilon: 50, scanSteps: 8, logging: true });
 
 requestAnimationFrame(() => {
 
     // ── Wires ─────────────────────────────────────────────────────────────────
-    const connectors = [
-        ...quelle.getConnectorPositions(schematic,       'quelle'),
-        ...trafo.getConnectorPositions(schematic,        'trafo'),
-        ...gleichrichter.getConnectorPositions(schematic,'gr'),
-        ...last.getConnectorPositions(schematic,         'last'),
-    ];
-
-    const connections = [
-        { id: 'k1',   from: 'quelle.out', to: 'trafo.in'   },
-        { id: 'k_u2', from: 'trafo.out',  to: 'gr.in'      },
-        { id: 'k_dc', from: 'gr.out',     to: 'last.in'    },
-    ];
-
-    const blocked = [quelle, trafo, gleichrichter, last].map(b => b.getImageDiv());
-
     try {
-        const wire = new ElectricalWire(schematic, {
-            gridSize: 10, wireColor: '#a0c0ff', wireWidth: 1.5,
-        });
-        wire.setConnectors(connectors);
-        wire.setConnections(connections);
-        wire.setBlockedAreas(blocked, { shrink: 5 });
-        wire.render();
+        wireBlocks(schematic, blocks, connections);
         log('Routing OK');
     } catch(e) {
         log(`Routing Fehler: ${e.message}`, 'err');
@@ -132,34 +115,8 @@ requestAnimationFrame(() => {
 
     // ── Solve ─────────────────────────────────────────────────────────────────
     try {
-        const { voltages, converged, iterations } = sim.solve();
-
-        const fmtAC = v => {
-            if (!v) return '?';
-            const abs = Math.sqrt(v.re**2 + v.im**2) / 1000;
-            const phi = Math.atan2(v.im, v.re) * 180 / Math.PI;
-            return `${abs.toFixed(3)} kV ∠ ${phi.toFixed(1)}°`;
-        };
-        const fmtDC = v => v == null ? '?' : `${(+v).toFixed(1)} V`;
-
-        log(`${converged ? '✓' : '⚠'} Konvergenz nach ${iterations} Iterationen`, converged ? '' : 'warn');
-        log(`k1   (400V AC): U = ${fmtAC(voltages.get('k1'))}`);
-        log(`k_u2 (230V AC): U = ${fmtAC(voltages.get('k_u2'))}`);
-        log(`k_dc (DC):      U = ${fmtDC(voltages.get('k_dc'))}`);
-
-        log('── Blockergebnisse ──');
-        [
-            ['Quelle',        quelle],
-            ['Trafo',         trafo],
-            ['Gleichrichter', gleichrichter],
-            ['Last (DC)',      last],
-        ].forEach(([name, block]) => {
-            log(`${name}:`);
-            Object.entries(block.results || {}).forEach(([key, val]) => {
-                const fmt = block._resultFormats?.[key];
-                log(`  ${fmt ? fmt(val) : JSON.stringify(val)}`);
-            });
-        });
+        const result = sim.solve();
+        log(`${result.converged ? '✓' : '⚠'} Konvergenz nach ${result.iterations} Iterationen`, result.converged ? '' : 'warn');
     } catch(e) {
         log(`Solver Fehler: ${e.message}`, 'err');
         console.error(e);
