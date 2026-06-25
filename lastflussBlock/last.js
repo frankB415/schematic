@@ -6,14 +6,16 @@ Connector:
   in — oben mittig (Eingang, Lastfluss von oben)
 
 Parameter:
-  pNom  — Nennleistung in W
-  uMin  — untere Betriebsspannung in V (darunter: P = 0)
-  uMax  — obere Betriebsspannung in V (darüber: P = 0)
+  pNom  — Nennleistung in W  (bei uNom)
+  uNom  — Nennspannung in V  → Lastwiderstand R = uNom² / pNom
+  uMin  — untere Betriebsspannung in V (darunter: I = 0)
+  uMax  — obere Betriebsspannung in V  (darüber:  I = 0)
 
 Kennlinie:
-  uMin <= u <= uMax  →  P = -pNom
-  u < uMin           →  P = 0
-  u > uMax           →  P = 0
+  R = uNom² / pNom  (konstant)
+  uMin <= u <= uMax  →  I = -u / R   (ohmsche Last)
+  u < uMin           →  I = 0
+  u > uMax           →  I = 0
 */
 
 const LAST_SVG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
@@ -26,12 +28,15 @@ const LAST_SVG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
 
 class Last extends lastflussBlock {
 
-    constructor(label, { pNom = 150, uMin = 18, uMax = 32, x = null, y = null } = {}) {
+    constructor(label, { pNom = 150, uNom = 24, uMin = 300, uMax = 1300, x = null, y = null } = {}) {
         super({ x, y, imageW: 60, imageH: 80, imageSrc: LAST_SVG });
         this._label = label;
         this.pNom = pNom;
+        this.uNom = uNom;
         this.uMin = uMin;
         this.uMax = uMax;
+        // Lastwiderstand R = uNom² / pNom
+        this._R = (uNom * uNom) / pNom;
 
         this.connectors = [
             { name: 'in', x: '50%', y: '0%', type: 'electrical', direction: 'up', minLength: 24 },
@@ -39,38 +44,31 @@ class Last extends lastflussBlock {
 
         this.params = [
             { key: 'pNom', value: pNom, format: v => lastflussBlock.fmtKW(v) },
+            { key: 'uNom', value: uNom, format: v => lastflussBlock.fmtKV(v) },
             { key: 'uMin', value: uMin, format: v => lastflussBlock.fmtKV(v) },
             { key: 'uMax', value: uMax, format: v => lastflussBlock.fmtKV(v) },
         ];
     }
 
-    /**
-     * Nennleistung innerhalb [uMin, uMax], weiches Ein-/Ausschalten über band=uMax*5%.
-     * Negativ = Verbrauch (Verbraucherzählpfeil).
-     */
+    calcCurrent(voltages) {
+        const u = voltages.in ?? this.uNom;
+        if (u < this.uMin || u > this.uMax) return { in: 0 };
+        // Verbrauch: Strom fliesst aus Knoten heraus → negativ
+        return { in: -u / this._R };
+    }
+
     calcPower(voltages) {
-        const u    = voltages.in ?? 0;
-        const band = this.uMax * 0.05;
-        const p    = interpTable([
-            { x: this.uMin - band, y: 0          },
-            { x: this.uMin,        y: this.pNom  },
-            { x: this.uMax,        y: this.pNom  },
-            { x: this.uMax + band, y: 0          },
-        ], u);
-        return { in: -p };
+        throw new Error('Last.calcPower() ist nicht mehr unterstuetzt — calcCurrent() verwenden.');
     }
 
     applyOperatingPoint(voltages) {
         const u    = voltages.in ?? 0;
-        const pAct = this.calcPower(voltages).in;
-        this._resultFormats = {
-            pAct: v => `P: ${lastflussBlock.fmtKW(v)}`,
-            uAct: v => `U: ${lastflussBlock.fmtKV(v)}`,
-        };
-        this._setResults({
-            pAct: Math.round(pAct * 10) / 10,
-            uAct: Math.round(u    * 100) / 100,
-        });
+        const iAct = (u >= this.uMin && u <= this.uMax) ? u / this._R : 0;
+        const pAct = u * iAct;
+        this.renderResults([
+            { key: 'pAct', text: `P: ${lastflussBlock.fmtKW(pAct)}` },
+            { key: 'uAct', text: `U: ${lastflussBlock.fmtKV(u)}` },
+        ]);
     }
 }
 
