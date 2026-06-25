@@ -18,11 +18,17 @@ Knotentyp wird automatisch erkannt — kein type-Feld nötig.
 ÜBERSCHRIEBENE METHODEN
 ═══════════════════════════════════════════════════════════════════
 
+  _xToVoltages()       — x-Vektor → Map<nodeId, {re,im}|number>
+  _voltagesToX()       — Map → x-Vektor (für Nachlauf)
   _voltagesForBlock()  — komplexe Spannungen an Blöcke übergeben
-  _scan()              — 2D-Scan für AC (Amplitude + Winkel)
-  _residual()          — F = [ΣP, ΣQ] für AC, F = [ΣP] für DC
-  _newton()            — Zustandsvektor statt Map, Gauß-Elimination
+  _residual()          — F = [ΣI_re, ΣI_im] fuer AC, F = [ΣI] fuer DC (Einheit: A)
+  _scan()              — Startpunkt (Mitte der Connection-Ranges)
+  _buildClamp()        — ±uMax für AC re/im
+  _dim()               — 2 für AC, 1 für DC
   _applyResult()       — Spannungsausgabe mit Phasenwinkeln
+  _logNewtonIter()     — Hook: Iter-Log mit Amplitude + Winkel
+
+  Newton, Jacobian, GMRES, Line-Search — geerbt von nodeBaseSim
 
 ═══════════════════════════════════════════════════════════════════
 LADEREIHENFOLGE
@@ -34,10 +40,10 @@ LADEREIHENFOLGE
   lastflussKomplexSim.js
 */
 
-class lastflussKomplexSim extends lastflussSim {
+class lastflussKomplexSim extends nodeBaseSim {
 
-    constructor(nodes, opts = {}) {
-        super(nodes, opts);
+    constructor(blocksOrNodes, connectionsOrOpts = {}, opts = {}) {
+        super(blocksOrNodes, connectionsOrOpts, opts);
         // AC/DC-Typen erkennen (nach super() da _connectorMap schon gebaut)
         this._nodeTypes = this._detectNodeTypes();
 
@@ -114,18 +120,18 @@ class lastflussKomplexSim extends lastflussSim {
                 types.set(node.id, nodeType);
                 continue;
             }
-            // Normaler Knoten: Typ aus calcPower erkennen
+            // Normaler Knoten: Typ aus calcCurrent erkennen
             const testVolt = new Map(this._nodes.map(n => [n.id, { re: 1, im: 0 }]));
             let isAC = false;
             outer: for (const block of node.blocks) {
                 const v = this._voltagesForBlock(block, testVolt);
-                let powers;
-                try { powers = block.calcPower(v); } catch(e) { continue; }
+                let currents;
+                try { currents = block.calcCurrent(v); } catch(e) { continue; }
                 const assign = this._connectorMap.get(block) ?? {};
                 for (const [connName, nodeId] of Object.entries(assign)) {
                     if (nodeId !== node.id) continue;
-                    const p = powers[connName];
-                    if (p && typeof p === 'object' && 're' in p) { isAC = true; break outer; }
+                    const ic = currents[connName];
+                    if (ic && typeof ic === 'object' && 're' in ic) { isAC = true; break outer; }
                 }
             }
             types.set(node.id, isAC ? 'ac' : 'dc');
@@ -145,7 +151,7 @@ class lastflussKomplexSim extends lastflussSim {
         for (const [connName, nodeId] of Object.entries(assign)) {
             const raw       = voltageMap.get(nodeId) ?? (this._nodeTypes?.get(nodeId) === 'ac' ? { re: 0, im: 0 } : 0);
             const isComplex = raw !== null && typeof raw === 'object' && 're' in raw;
-            v[connName] = (isComplex && !(block instanceof lastflussKomplexBlock))
+            v[connName] = (isComplex && !(typeof lastflussKomplexBlock !== 'undefined' && block instanceof lastflussKomplexBlock))
                 ? this._cAbs(raw)
                 : raw;
         }
@@ -162,6 +168,21 @@ class lastflussKomplexSim extends lastflussSim {
     // ── Zustandsvektor ────────────────────────────────────────────────────────
 
     _dim(nodeId) { return this._nodeTypes.get(nodeId) === 'ac' ? 2 : 1; }
+
+    /** Überschreibt nodeBaseSim._buildClamp: AC-Knoten brauchen ±uMax für re und im */
+    _buildClamp() {
+        const lo = [], hi = [];
+        for (const node of this._nodes) {
+            const uMin = this._uClampMin(node);
+            const uMax = this._uClampMax(node);
+            if (this._nodeTypes.get(node.id) === 'ac') {
+                lo.push(-uMax, -uMax); hi.push(uMax, uMax);
+            } else {
+                lo.push(uMin); hi.push(uMax);
+            }
+        }
+        return { lo, hi };
+    }
 
     _xToVoltages(x) {
         const map = new Map();
@@ -194,11 +215,12 @@ class lastflussKomplexSim extends lastflussSim {
     // ── Residualvektor ────────────────────────────────────────────────────────
 
     /**
-     * Überschreibt lastflussSim._residual:
-     * AC-Knoten liefern [ΣP, ΣQ], DC-Knoten nur [ΣP].
+     * Ueberschreibt lastflussSim._residual:
+     * AC-Knoten liefern [ΣIre, ΣIim], DC-Knoten nur [ΣI].
+     * Einheit: Ampere. Gleichgewicht: Σ I = 0.
      */
     _residual(x) {
-        const voltageMap = this._xToVoltages(x);
+        const voltageMap = Array.isArray(x) ? this._xToVoltages(x) : x;
         const balance = new Map(this._nodes.map(n => [
             n.id,
             this._nodeTypes.get(n.id) === 'ac' ? { re: 0, im: 0 } : 0
@@ -210,27 +232,28 @@ class lastflussKomplexSim extends lastflussSim {
                 if (processedBlocks.has(block)) continue;
                 processedBlocks.add(block);
                 const v = this._voltagesForBlock(block, voltageMap);
-                let powers;
-                try { powers = block.calcPower(v); } catch(e) { continue; }
+                let currents;
+                try { currents = block.calcCurrent(v); } catch(e) { continue; }
                 // Normale Connectoren
                 const assign = this._connectorMap.get(block) ?? {};
                 for (const [connName, nodeId] of Object.entries(assign)) {
-                    const p = powers[connName];
-                    if (p == null) continue;
-                    const pc  = this._toC(p);
+                    const ic = currents[connName];
+                    if (ic == null) continue;
+                    const icc = this._toC(ic);
                     const cur = balance.get(nodeId);
-                    if (typeof cur === 'number') balance.set(nodeId, cur + pc.re);
-                    else                         balance.set(nodeId, this._cAdd(cur, pc));
+                    if (typeof cur === 'number') balance.set(nodeId, cur + icc.re);
+                    else                         balance.set(nodeId, this._cAdd(cur, icc));
                 }
                 // Versteckte Knoten
                 if (typeof block.getHiddenNodes === 'function') {
                     for (const hn of block.getHiddenNodes()) {
-                        const p = powers[hn.id];
-                        if (p == null || !balance.has(hn.id)) continue;
-                        const pc  = this._toC(p);
+                        // versteckte Knoten koennen per id oder connectorName addressiert sein
+                        const ic = currents[hn.id] ?? currents[hn.connectorName];
+                        if (ic == null || !balance.has(hn.id)) continue;
+                        const icc = this._toC(ic);
                         const cur = balance.get(hn.id);
-                        if (typeof cur === 'number') balance.set(hn.id, cur + pc.re);
-                        else                         balance.set(hn.id, this._cAdd(cur, pc));
+                        if (typeof cur === 'number') balance.set(hn.id, cur + icc.re);
+                        else                         balance.set(hn.id, this._cAdd(cur, icc));
                     }
                 }
             }
@@ -248,150 +271,241 @@ class lastflussKomplexSim extends lastflussSim {
     // ── Scan ─────────────────────────────────────────────────────────────────
 
     /**
-     * Überschreibt lastflussSim._scan:
-     * AC-Knoten werden in Polarkoordinaten gescannt (Amplitude + Winkel).
+     * Startvektor: Mittelpunkt jedes Connection-Bereichs, AC mit phi=0.
+     * Kein Rasterscan — Connection-Ranges muessen den Betriebspunkt einschliessen.
      */
     _scan() {
-        const steps      = this._scanSteps;
-        const candidates = [];
-
-        const ranges = this._nodes.map(node => {
-            const uMin = node.uMin ?? 10;
-            const uMax = node.uMax ?? (this._nodeTypes.get(node.id) === 'ac' ? 1000 : 100);
+        const x0  = [];
+        let   xIdx = 0;
+        for (const node of this._nodes) {
+            const uMid = (this._uMinForNode(node) + this._uMaxForNode(node)) / 2;
             if (this._nodeTypes.get(node.id) === 'ac') {
-                const amps = Array.from({ length: steps }, (_, i) => uMin + (uMax - uMin) * i / (steps - 1));
-                const phis = [-30, -15, 0, 15, 30].map(d => d * Math.PI / 180);
-                return { amps, phis };
+                x0.push(uMid, 0);
             } else {
-                return { vals: Array.from({ length: steps }, (_, i) => uMin + (uMax - uMin) * i / (steps - 1)) };
+                x0.push(uMid);
             }
-        });
-
-        const relResidual = (F, x) => {
-            const voltageMap = this._xToVoltages(x);
-            let sum = 0, idx = 0;
+        }
+        if (this._logging) {
+            const parts = [];
+            let idx = 0;
             for (const node of this._nodes) {
-                let flow = 0;
-                for (const block of node.blocks) {
-                    const v = this._voltagesForBlock(block, voltageMap);
-                    let powers; try { powers = block.calcPower(v); } catch(e) { continue; }
-                    const assign = this._connectorMap.get(block) ?? {};
-                    for (const [cn, nid] of Object.entries(assign)) {
-                        if (nid !== node.id) continue;
-                        const p = powers[cn]; if (p == null) continue;
-                        flow += Math.abs(this._toC(p).re);
-                    }
-                }
-                const norm = flow > 1 ? flow : Infinity;
-                if (this._nodeTypes.get(node.id) === 'ac') {
-                    sum += (F[idx]/norm)**2 + (F[idx+1]/norm)**2; idx += 2;
+                const isAC = this._nodeTypes.get(node.id) === 'ac';
+                if (isAC) {
+                    parts.push(`${node.id}: ${Math.sqrt(x0[idx]**2+x0[idx+1]**2).toFixed(0)}V \u22200\u00b0`);
+                    idx += 2;
                 } else {
-                    sum += (F[idx]/norm)**2; idx += 1;
+                    parts.push(`${node.id}: ${x0[idx].toFixed(0)}V`);
+                    idx += 1;
                 }
             }
-            return Math.sqrt(sum) * 100;
-        };
-
-        const buildCombinations = (idx, current) => {
-            if (idx === this._nodes.length) {
-                const x   = current.flat();
-                const F   = this._residual(x);
-                const rel = relResidual(F, x);
-                if (isFinite(rel)) candidates.push({ x, rel });
-                return;
-            }
-            const r = ranges[idx];
-            if (r.amps) {
-                for (const amp of r.amps)
-                    for (const phi of r.phis)
-                        buildCombinations(idx + 1, [...current, [amp * Math.cos(phi), amp * Math.sin(phi)]]);
-            } else {
-                for (const val of r.vals)
-                    buildCombinations(idx + 1, [...current, [val]]);
-            }
-        };
-
-        buildCombinations(0, []);
-        candidates.sort((a, b) => a.rel - b.rel);
-        this._log(`Scan: ${candidates.length} Punkte, beste ${this._scanTop}:`);
-        candidates.slice(0, this._scanTop).forEach((c, i) => this._log(`  #${i+1} rel=${c.rel.toFixed(1)}%`));
-        return candidates.slice(0, this._scanTop).map(c => c.x);
+            this._log(`Startpunkt: ${parts.join('  ')}`);
+        }
+        return [x0];
     }
 
-    // ── Newton-Raphson ────────────────────────────────────────────────────────
+    // ── HELM (Holomorphic Embedding Load Flow Method) ────────────────────────
+    //
+    // Idee: Ersetze F(x) = 0 durch F(x(s), s) = 0 mit s in [0,1].
+    // Bei s=0 ist die Loesung trivial (x0 = Prescan-Mitte).
+    // Bei s=1 ist es das echte Problem.
+    // x(s) wird als Potenzreihe entwickelt: x(s) = x0 + x1*s + x2*s^2 + ...
+    // Jeder Koeffizient xk loest ein LINEARES System J0 * xk = rhs_k.
+    // Die Reihe wird mit Pade-Approximanten nach s=1 fortgesetzt.
+    //
+    // Fuer quadratische F(x) = A*x + B + C(x,x):
+    //   Ordnung 0: A*x0 + B(s=0) = 0  (trivial, x0 = Startpunkt)
+    //   Ordnung k: A*xk = -sum_{j=1}^{k-1} C(xj, x_{k-j}) - B_k
+    // Die Jacobian J0 = A + 2*C(x0,.) wird einmalig faktorisiert.
+    //
+    // Fuer allgemeine (nichtlineare) F verwenden wir eine vereinfachte Version:
+    // wir bauen die Reihe numerisch auf durch schrittweise Linearisierung
+    // am aktuellen Entwicklungspunkt x0.
+
+    _helm(x0, { maxOrder = 20, padeDeg = 8 } = {}) {
+        const n      = x0.length;
+        const tol    = this._epsilon;
+
+        // Jacobian und Residuum am Startpunkt
+        const { J, F0 } = this._jacobian(x0);
+        const normF0 = Math.sqrt(F0.reduce((s,v) => s+v*v, 0));
+        if (normF0 < tol) return { x: x0, converged: true, iter: 0, residual: normF0 };
+
+        // LU-Zerlegung von J (einmalig) via Gauss mit Pivoting
+        const LU  = J.map(r => [...r]);
+        const piv = Array.from({length: n}, (_, i) => i);
+        for (let k = 0; k < n; k++) {
+            // Pivot suchen
+            let maxVal = Math.abs(LU[k][k]), maxRow = k;
+            for (let i = k+1; i < n; i++) {
+                if (Math.abs(LU[i][k]) > maxVal) { maxVal = Math.abs(LU[i][k]); maxRow = i; }
+            }
+            if (maxRow !== k) {
+                [LU[k], LU[maxRow]] = [LU[maxRow], LU[k]];
+                [piv[k], piv[maxRow]] = [piv[maxRow], piv[k]];
+            }
+            if (Math.abs(LU[k][k]) < 1e-14) continue;
+            for (let i = k+1; i < n; i++) {
+                const f = LU[i][k] / LU[k][k];
+                for (let j = k; j < n; j++) LU[i][j] -= f * LU[k][j];
+                LU[i][k] = f;
+            }
+        }
+        const luSolve = (b) => {
+            const bp = piv.map(i => b[i]);
+            // Vorwaerts
+            for (let i = 0; i < n; i++)
+                for (let j = 0; j < i; j++) bp[i] -= LU[i][j] * bp[j];
+            // Rueckwaerts
+            for (let i = n-1; i >= 0; i--) {
+                for (let j = i+1; j < n; j++) bp[i] -= LU[i][j] * bp[j];
+                bp[i] /= LU[i][i];
+            }
+            return bp;
+        };
+
+        // Koeffizienten der Potenzreihe x(s) = sum_k  c[k] * s^k
+        // c[0] = x0 (Startpunkt)
+        // c[k] = luSolve( -(F(x0 + sum_{j=1}^k c[j]*s^j) - F(x0)) / s^k )
+        // Wir bauen iterativ auf:
+        const c = [x0.slice()];  // c[0]
+
+        // Erste Naherung: Newton-Schritt (= erster Koeffizient)
+        const c1 = luSolve(F0.map(v => -v));
+        c.push(c1);
+
+        // Hohere Ordnungen: nichtlineare Korrektur via numerischer Differenz
+        for (let k = 2; k <= maxOrder; k++) {
+            // x_partial = x0 + sum_{j=1}^{k-1} c[j] * 1^j  (bei s=1)
+            const xp = x0.slice();
+            for (let j = 1; j < k; j++)
+                for (let i = 0; i < n; i++) xp[i] += c[j][i];
+
+            // F(xp): nichtlinearer Rest
+            const Fk = this._residual(xp);
+
+            // Linearer Anteil am Startpunkt: J * (xp - x0)
+            const dx = xp.map((v,i) => v - x0[i]);
+            const Jdx = J.map(row => row.reduce((s,a,j) => s + a*dx[j], 0));
+
+            // Nichtlinearer Rest dieser Ordnung: Fk - Jdx - F0
+            // (zieht den linearen Teil ab, der schon durch c1 abgedeckt ist)
+            const rhs = Fk.map((v,i) => -(v - Jdx[i] - F0[i]));
+            const ck  = luSolve(rhs);
+            c.push(ck);
+
+            // Pruefe ob Reihe konvergiert (Norm der neuen Koeffizienten)
+            const normCk = Math.sqrt(ck.reduce((s,v) => s+v*v, 0));
+            if (normCk < tol * 1e-3) break;
+        }
+
+        const order = c.length - 1;
+
+        // Pade-Approximant [L/M] mit L=M=padeDeg/2 fuer s=1
+        // Wertet die Reihe robuster aus als direkte Summation
+        const pade = (varIdx) => {
+            const L = Math.min(Math.floor(padeDeg/2), Math.floor(order/2));
+            const M = Math.min(padeDeg - L, order - L);
+            if (L < 1 || M < 1) {
+                // Fallback: direkte Summe
+                return c.reduce((s, ck) => s + ck[varIdx], 0) - x0[varIdx] * (c.length - 1);
+            }
+            // Koeffizienten der Reihe fuer diese Variable (ab Ordnung 0)
+            const a = c.map(ck => ck[varIdx]);
+
+            // Pade via lineares System fuer Nenner-Koeffizienten q[1..M]
+            // sum_{j=1}^M q[j] * a[k-j] = -a[k]  fuer k = L+1..L+M
+            const Apq = [];
+            const bpq = [];
+            for (let k = L+1; k <= L+M && k < a.length; k++) {
+                const row = [];
+                for (let j = 1; j <= M; j++) row.push(k-j >= 0 ? a[k-j] : 0);
+                Apq.push(row);
+                bpq.push(-a[k]);
+            }
+            // Kleinste-Quadrate-Loesung (hier einfach: falls quadratisch, direkt loesen)
+            const mSize = Apq.length;
+            if (mSize === 0) return a.reduce((s,v) => s+v, 0);
+            const qLU = Apq.map(r => [...r]);
+            const qb  = [...bpq];
+            for (let k = 0; k < mSize; k++) {
+                let maxR = k;
+                for (let i = k+1; i < mSize; i++)
+                    if (Math.abs(qLU[i][k]) > Math.abs(qLU[maxR][k])) maxR = i;
+                [qLU[k], qLU[maxR]] = [qLU[maxR], qLU[k]];
+                [qb[k],  qb[maxR]]  = [qb[maxR],  qb[k]];
+                if (Math.abs(qLU[k][k]) < 1e-15) continue;
+                for (let i = k+1; i < mSize; i++) {
+                    const f = qLU[i][k] / qLU[k][k];
+                    for (let j = k; j < mSize; j++) qLU[i][j] -= f*qLU[k][j];
+                    qb[i] -= f*qb[k];
+                }
+            }
+            const q = new Array(mSize).fill(0);
+            for (let i = mSize-1; i >= 0; i--) {
+                q[i] = qb[i];
+                for (let j = i+1; j < mSize; j++) q[i] -= qLU[i][j]*q[j];
+                q[i] /= qLU[i][i] || 1;
+            }
+            // Zaehler p[0..L]
+            const p = new Array(L+1).fill(0);
+            for (let k = 0; k <= L && k < a.length; k++) {
+                p[k] = a[k];
+                for (let j = 1; j <= Math.min(k, mSize); j++) p[k] += (q[j-1]||0)*a[k-j];
+            }
+            // Auswertung bei s=1
+            let num = 0, den = 1;
+            for (let k = 0; k <= L; k++) num += p[k];
+            for (let k = 1; k <= mSize; k++) den += (q[k-1]||0);
+            if (Math.abs(den) < 1e-12) {
+                // Pol nah an s=1: Fallback direkte Summe
+                return a.reduce((s,v) => s+v, 0);
+            }
+            return num / den;
+        };
+
+        // HELM-Loesung bei s=1
+        const xHelm = Array.from({length: n}, (_, i) => pade(i));
+
+        // Residuum pruefen
+        const { lo, hi } = this._buildClamp();
+        const xClamped = xHelm.map((v,i) => Math.max(lo[i], Math.min(hi[i], v)));
+        const Fhelm = this._residual(xClamped);
+        const normHelm = Math.sqrt(Fhelm.reduce((s,v) => s+v*v, 0));
+
+        this._log(`HELM: Ordnung=${order}, |F|=${normHelm.toFixed(2)}W`);
+
+        const converged = normHelm < tol;
+
+        // Wenn HELM gut genug: direkt zurueck
+        // Sonst: Newton-Nachbesserung von HELM-Startpunkt
+        if (converged) return { x: xClamped, converged: true, iter: order, residual: normHelm };
+
+        // Newton-Nachbesserung (maximal 20 Iter)
+        const refined = this._newton(xClamped);
+        return refined;
+    }
+
+    // ── Iter-Log für AC-Knoten ────────────────────────────────────────────────
 
     /**
-     * Überschreibt lastflussSim._newton:
-     * Arbeitet mit Zustandsvektor x[] statt Map, Gauß-Elimination statt GMRES.
+     * Überschreibt den Standard-Iter-Log aus nodeBaseSim._newton:
+     * Zeigt Amplitude und Phasenwinkel statt nur |F|.
      */
-    _solveLinear(J, b) {
-        const n = b.length;
-        const A = J.map((row, i) => [...row, b[i]]);
-        for (let col = 0; col < n; col++) {
-            let maxRow = col;
-            for (let row = col + 1; row < n; row++)
-                if (Math.abs(A[row][col]) > Math.abs(A[maxRow][col])) maxRow = row;
-            [A[col], A[maxRow]] = [A[maxRow], A[col]];
-            if (Math.abs(A[col][col]) < 1e-14) continue;
-            for (let row = col + 1; row < n; row++) {
-                const f = A[row][col] / A[col][col];
-                for (let k = col; k <= n; k++) A[row][k] -= f * A[col][k];
-            }
-        }
-        const x = new Array(n).fill(0);
-        for (let i = n - 1; i >= 0; i--) {
-            let s = A[i][n];
-            for (let j = i + 1; j < n; j++) s -= A[i][j] * x[j];
-            x[i] = Math.abs(A[i][i]) > 1e-14 ? s / A[i][i] : 0;
-        }
-        return x;
-    }
-
-    _buildClamp() {
-        const lo = [], hi = [];
+    _logNewtonIter(iter, x, norm) {
+        const voltLog = this._xToVoltages(x);
+        const parts = [];
         for (const node of this._nodes) {
-            const uMin = node.uMin ?? 0;
-            const uMax = node.uMax ?? 1e9;
+            if (node.hidden) continue;
+            const v = voltLog.get(node.id);
             if (this._nodeTypes.get(node.id) === 'ac') {
-                lo.push(-uMax, -uMax); hi.push(uMax, uMax);
+                const amp = Math.sqrt(v.re**2+v.im**2);
+                const phi = Math.atan2(v.im,v.re)*180/Math.PI;
+                parts.push(`${node.id}: ${amp.toFixed(2)}V ∠${phi.toFixed(1)}°`);
             } else {
-                lo.push(uMin); hi.push(uMax);
+                parts.push(`${node.id}: ${(+v).toFixed(2)}V`);
             }
         }
-        return { lo, hi };
-    }
-
-    _jacobian(x) {
-        const F0 = this._residual(x);
-        const J  = Array.from({ length: F0.length }, () => new Array(x.length).fill(0));
-        for (let j = 0; j < x.length; j++) {
-            const xp = [...x];
-            xp[j] += this._dU;
-            const Fp = this._residual(xp);
-            for (let i = 0; i < F0.length; i++) J[i][j] = (Fp[i] - F0[i]) / this._dU;
-        }
-        return { J, F0 };
-    }
-
-    _newton(x0) {
-        const { lo, hi } = this._buildClamp();
-        const clamp = x => x.map((v, i) => Math.max(lo[i], Math.min(hi[i], v)));
-        let x = clamp([...x0]);
-        for (let iter = 0; iter < this._maxIter; iter++) {
-            const { J, F0 } = this._jacobian(x);
-            const norm = Math.sqrt(F0.reduce((s, v) => s + v*v, 0));
-            if (norm < this._epsilon) return { x, converged: true, iter, residual: norm };
-            const dx    = this._solveLinear(J, F0.map(v => -v));
-            let   alpha = 1.0;
-            for (let ls = 0; ls < 8; ls++) {
-                const xn = clamp(x.map((v, i) => v + alpha * dx[i]));
-                const nn = Math.sqrt(this._residual(xn).reduce((s, v) => s + v*v, 0));
-                if (nn < norm) { x = xn; break; }
-                alpha *= this._damp;
-            }
-        }
-        const F = this._residual(x);
-        return { x, converged: false, iter: this._maxIter, residual: Math.sqrt(F.reduce((s,v)=>s+v*v,0)) };
+        this._log(`Iter ${iter}  ${parts.join('  ')}  |F|=${norm.toFixed(4)}A`);
     }
 
     // ── Ergebnis anwenden ────────────────────────────────────────────────────
@@ -405,45 +519,35 @@ class lastflussKomplexSim extends lastflussSim {
                 let nodeSum = 0;
                 for (const block of node.blocks) {
                     const v = this._voltagesForBlock(block, voltageMap);
-                    let pw; try { pw = block.calcPower(v); } catch(e) { continue; }
+                    let pw; try { pw = block.calcCurrent(v); } catch(e) { continue; }
                     const assign = this._connectorMap.get(block) ?? {};
                     for (const [cn, nid] of Object.entries(assign)) {
                         if (nid !== node.id) continue;
                         const p = pw[cn]; if (p == null) continue;
-                        const pc = this._toC(p);
-                        nodeSum += pc.re;
-                        console.log(`[solve] ${node.id} | ${block._label}.${cn}: P=${pc.re.toFixed(1)} Q=${pc.im.toFixed(1)} W`);
+                        const ic = this._toC(p);
+                        nodeSum += ic.re;
+                        console.log(`[solve] ${node.id} | ${block._label}.${cn}: I_re=${ic.re.toFixed(3)} I_im=${ic.im.toFixed(3)} A`);
                     }
                 }
-                console.log(`[solve] ${node.id} | Summe P=${nodeSum.toFixed(1)} W`);
+                console.log(`[solve] ${node.id} | Summe I=${nodeSum.toFixed(3)} A`);
             }
         }
 
         const appliedBlocks = new Set();
-        const powers = new Map();
         for (const node of this._nodes) {
             for (const block of node.blocks) {
                 if (appliedBlocks.has(block)) continue;
                 appliedBlocks.add(block);
                 const v = this._voltagesForBlock(block, voltageMap);
-                try { powers.set(block, block.calcPower(v)); block.applyOperatingPoint(v); }
+                try { block.applyOperatingPoint(v); }
                 catch(e) { this._log('applyOperatingPoint Fehler:', e.message); }
             }
         }
 
-        if (this._logging) {
-            console.log(`[lastflussKomplexSim] Ergebnis nach ${iter} Iterationen${converged ? '' : ' — NICHT KONVERGIERT'}`);
-            for (const node of this._nodes) {
-                const v    = voltageMap.get(node.id);
-                const vStr = typeof v === 'number'
-                    ? `${v.toFixed(2)} V`
-                    : `${Math.sqrt(v.re**2+v.im**2).toFixed(2)} V ∠ ${(Math.atan2(v.im,v.re)*180/Math.PI).toFixed(1)}°`;
-                if (!node.hidden) console.log(`  Knoten ${node.id}: U=${vStr}`);
-            }
-        }
-
-        return { voltages: voltageMap, powers, converged, iterations: iter };
+        return { voltages: voltageMap, converged, iterations: iter, x: best.x };
     }
 }
 
 if (typeof window !== 'undefined') window.lastflussKomplexSim = lastflussKomplexSim;
+
+console.log('[lastflussKomplexSim] Version 2026-06-09 build 16 (Scan-Log entfernt)');
