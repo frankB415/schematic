@@ -15,18 +15,20 @@
   Solar1 → DCDC → Last (links), Solar2 (rechts)
 </p>
 
-<div id="schematic"></div>
+<div id="schematic" style="width:700px; height:520px; position: relative;"></div>
 <div id="log"></div>
 
 <script src="/schematic/schematicBlock/schematicBlock.js"></script>
 <script src="/schematic/labeledBlock/labeledBlock.js"></script>
 <script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/wireBlocks.js"></script>
 <script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
-<script src="/schematic/simulator/baseSim.js"></script>
-<script src="/schematic/simulator/lastflussSim.js"></script>
 <script src="/schematic/lastflussBlock/solarPanel.js"></script>
 <script src="/schematic/lastflussBlock/last.js"></script>
 <script src="/schematic/lastflussBlock/dcdc.js"></script>
+<script src="/schematic/simulator/baseSim.js"></script>
+<script src="/schematic/simulator/nodeBaseSim.js"></script>
+<script src="/schematic/simulator/lastflussKomplexSim.js"></script>
 
 <script type="module">
 
@@ -66,62 +68,44 @@ solar1.render(schematic);
 dcdc.render(schematic);
 last1.render(schematic);
 solar2.render(schematic);
+const blocks = [solar1, dcdc, solar2, last1];
 
-// ── Routing ──────────────────────────────────────────────────────────────────
+const connections = [
+    { id: 'k1',      from: 'Solar1.out', to: 'DCDC1.in',  uMin: 36, uMax: 48 },
+    { id: 'k2',      from: 'Solar2.out', to: 'Last1.in',  uMin: 20, uMax: 36 },
+    { id: 'k2',      from: 'DCDC1.out',  to: 'Last1.in',  uMin: 20, uMax: 36 },
+];
+
+const sim = new lastflussKomplexSim(blocks, connections, { logging: true, epsilon: 0.1 });
+console.log('[demo3] sim erstellt, logging:', sim._logging, 'nodes:', sim._nodes?.length);
+
+// ── Routing + Simulation ─────────────────────────────────────────────────────
 requestAnimationFrame(() => {
-
-  const connectors = [
-    ...solar1.getConnectorPositions(schematic, 'solar1'),
-    ...dcdc.getConnectorPositions(schematic,   'dcdc'),
-    ...solar2.getConnectorPositions(schematic, 'solar2'),
-    ...last1.getConnectorPositions(schematic,  'last1'),
-  ];
-
-  // Knoten1: Solar1 → DCDC.in
-  // Knoten2: Solar2 → Last, DCDC.out → Last
-  const connections = [
-    { id: 'net-k1',      from: 'solar1.out', to: 'dcdc.in'   },
-    { id: 'net-k2-s2',   from: 'solar2.out', to: 'last1.in'  },
-    { id: 'net-k2-dcdc', from: 'dcdc.out',   to: 'last1.in'  },
-  ];
-
-  const blocked = [solar1, dcdc, solar2, last1].map(b => b.getImageDiv());
-
   try {
-    const wire = new ElectricalWire(schematic, {
-      gridSize: 10, wireColor: '#7ecfff', wireWidth: 1.5, logging: false,
-    });
-    wire.setConnectors(connectors);
-    wire.setConnections(connections);
-    wire.setBlockedAreas(blocked, { shrink: 5 });
-    wire.render();
+    wireBlocks(schematic, blocks, connections, { wireColor: '#7ecfff' });
     log('Routing OK');
-    attachWireInspector(schematic, connections, connectors);
   } catch(e) {
     log('Routing Fehler: ' + e.message, 'err');
     console.error(e);
-    return;
   }
 
-  // ── Simulation ──────────────────────────────────────────────────────────
-  const sim = new lastflussSim([
-    { id: 'k1', blocks: [solar1, dcdc] },
-    { id: 'k2', blocks: [solar2, last1, dcdc] },
-  ], { logging: true, epsilon: 0.1 });
-
-  const result = sim.solve();
-
-  if (result.converged) {
-    const u1 = result.voltages.get('k1').toFixed(2);
-    const u2 = result.voltages.get('k2').toFixed(2);
-    const ps1 = result.powers.get(solar1)?.out?.toFixed(1) ?? '?';
-    const ps2 = result.powers.get(solar2)?.out?.toFixed(1) ?? '?';
-    const pl  = result.powers.get(last1)?.in?.toFixed(1) ?? '?';
-    const pd  = result.powers.get(dcdc)?.out?.toFixed(1) ?? '?';
-    log(`Simulation OK (${result.iterations} Iter): U1=${u1}V U2=${u2}V | ` +
-        `Solar1=${ps1}W Solar2=${ps2}W Last=${pl}W DCDC=${pd}W`);
-  } else {
-    log('Simulation nicht konvergiert!', 'warn');
+  try {
+    const result = sim.solve();
+    if (result.converged) {
+      const u1 = result.voltages.get('k1')?.toFixed(2) ?? '?';
+      const u2 = result.voltages.get('k2')?.toFixed(2) ?? '?';
+      const ps1 = result.powers.get(solar1)?.out?.toFixed(1) ?? '?';
+      const ps2 = result.powers.get(solar2)?.out?.toFixed(1) ?? '?';
+      const pl  = result.powers.get(last1)?.in?.toFixed(1) ?? '?';
+      const pd  = result.powers.get(dcdc)?.out?.toFixed(1) ?? '?';
+      log(`Simulation OK (${result.iterations} Iter): U1=${u1}V U2=${u2}V | ` +
+          `Solar1=${ps1}W Solar2=${ps2}W Last=${pl}W DCDC=${pd}W`);
+    } else {
+      log('Simulation nicht konvergiert!', 'warn');
+    }
+  } catch(e) {
+    log(`Solver Fehler: ${e.message}`, 'err');
+    console.error(e);
   }
 });
 
