@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Lastflussanalyse Demo</title>
+<link rel="stylesheet" href="/schematic/schematicBlock/schematicBlock.css">
+  <link rel="stylesheet" href="/schematic/demo.css">
+</head>
+<body>
+
+<h1>Lastflussanalyse</h1>
+<p class="subtitle">Solar1 + Solar2 → Last1 (parallel) — Lastfluss von oben nach unten</p>
+
+<div id="schematic" style="width:700px; height:520px; position: relative;"></div>
+<div id="log"></div>
+
+<script src="/schematic/schematicBlock/schematicBlock.js"></script>
+<script src="/schematic/labeledBlock/labeledBlock.js"></script>
+<script src="/electricalWire/electricalWire.js"></script>
+<script src="/schematic/lastflussBlock/wireBlocks.js"></script>
+<script src="/schematic/lastflussBlock/lastflussBlock.js"></script>
+<script src="/schematic/lastflussBlock/solarPanel.js"></script>
+<script src="/schematic/lastflussBlock/last.js"></script>
+<script src="/schematic/simulator/baseSim.js"></script>
+<script src="/schematic/simulator/nodeBaseSim.js"></script>
+<script src="/schematic/simulator/lastflussKomplexSim.js"></script>
+
+<script type="module">
+
+// ── Logging ──────────────────────────────────────────────────────────────────
+const logEl = document.getElementById('log');
+function log(msg, cls = '') {
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = msg;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── Instanzen ────────────────────────────────────────────────────────────────
+//
+//   [Solar1]   [Solar2]      ← Erzeuger oben, Connector unten (out)
+//      |           |
+//      └─────┬─────┘         ← parallel zusammengeführt
+//            ↓
+//          [Last1]           ← Verbraucher unten, Connector oben (in)
+//
+// x/y = Bildmittelpunkt (imageW=60, imageH=80 → Mitte bei left+30, top+40)
+const solar1 = new SolarPanel('Solar1', { pNom: 300, voc: 40, x: 150, y:  70, imageW: 60, imageH: 80 });
+const solar2 = new SolarPanel('Solar2', { pNom: 300, voc: 40, x: 510, y:  70, imageW: 60, imageH: 80 });
+const last1   = new Last('Last1',  { pNom: 500, uMin: 28, uMax: 38,  x: 330, y: 270, imageW: 60, imageH: 80 });
+
+const schematic = document.getElementById('schematic');
+
+solar1.render(schematic);
+solar2.render(schematic);
+last1.render(schematic);
+
+const blocks = [solar1, solar2, last1];
+
+const connections = [
+    { id: 'bus', from: 'Solar1.out', to: 'Last1.in', uMin: 28, uMax: 40 },
+    { id: 'bus', from: 'Solar2.out', to: 'Last1.in', uMin: 28, uMax: 40 },
+];
+
+const sim = new lastflussKomplexSim(blocks, connections, { logging: true, epsilon: 0.01 });
+
+// ── Routing ──────────────────────────────────────────────────────────────────
+requestAnimationFrame(() => {
+
+  try {
+    wireBlocks(schematic, blocks, connections, { wireColor: '#7ecfff' });
+    log('Routing OK');
+
+    // Knotenpotentialanalyse
+    const result = sim.solve();
+    if (result.converged) {
+      const uBus = result.voltages.get('bus') ?? 0;
+      const sumPower = (block) => Object.values(result.powers.get(block) ?? {}).reduce((a, b) => a + b, 0);
+      log(`Simulation OK: U=${uBus.toFixed(2)}V  ` +
+          `P_solar1=${sumPower(solar1).toFixed(1)}W  ` +
+          `P_solar2=${sumPower(solar2).toFixed(1)}W  ` +
+          `P_last=${sumPower(last1).toFixed(1)}W`);
+    } else {
+      log('Simulation nicht konvergiert!', 'warn');
+    }
+  } catch(e) {
+    log('Fehler: ' + e.message, 'err');
+    console.error(e);
+  }
+});
+
+// ── Wire-Inspektor (Rechtsklick) ─────────────────────────────────────────────
+function attachWireInspector(container, connections, connectors) {
+  const panel = document.createElement('div');
+  panel.style.cssText = [
+    'display:none','position:fixed','z-index:9999',
+    'background:#0d1a2a','border:1px solid #7ecfff','border-radius:5px',
+    'padding:10px 14px','font-family:Courier New,monospace','font-size:0.72rem',
+    'color:#c8e8ff','line-height:1.7','min-width:280px','max-width:420px',
+    'box-shadow:0 4px 20px rgba(0,0,0,0.6)','white-space:pre',
+  ].join(';');
+  document.body.appendChild(panel);
+  document.addEventListener('click', () => panel.style.display = 'none');
+  panel.addEventListener('click', e => e.stopPropagation());
+
+  const copyBtn = document.createElement('button');
+  copyBtn.textContent = '⎘ kopieren';
+  copyBtn.style.cssText = [
+    'display:block','margin-top:8px','padding:3px 10px',
+    'background:#1a3a5a','border:1px solid #7ecfff','border-radius:3px',
+    'color:#7ecfff','font-family:Courier New,monospace','font-size:0.7rem',
+    'cursor:pointer','width:100%',
+  ].join(';');
+  copyBtn.onclick = () => {
+    navigator.clipboard.writeText(panel.dataset.copyText || '').then(
+      () => { copyBtn.textContent = '✓ kopiert!'; setTimeout(() => copyBtn.textContent = '⎘ kopieren', 1500); },
+      () => { copyBtn.textContent = '✗ Fehler'; }
+    );
+  };
+
+  container.addEventListener('contextmenu', e => {
+    const hit = e.target.closest('.ew-wire-hit');
+    if (!hit) return;
+    e.preventDefault();
+
+    const netId = hit.dataset.netId || '';
+
+    // Alle Wire-Paths dieses Netzes (koennen mehrere sein bei T-Junction)
+    const wirePaths = [...container.querySelectorAll(`.ew-wire[data-net-id="${CSS.escape(netId)}"]`)];
+    const netConns  = connections.filter(x => netId.split(',').includes(x.id));
+
+    function parsePath(d) {
+      const points = [], re = /[ML]([-\d.]+),([-\d.]+)/g;
+      let m;
+      while ((m = re.exec(d)) !== null) points.push({ x: parseFloat(m[1]), y: parseFloat(m[2]) });
+      const segments = [];
+      for (let i = 1; i < points.length; i++) {
+        const adx = Math.abs(points[i].x - points[i-1].x);
+        const ady = Math.abs(points[i].y - points[i-1].y);
+        segments.push({ dx: points[i].x-points[i-1].x, dy: points[i].y-points[i-1].y, ortho: adx < 0.5 || ady < 0.5 });
+      }
+      return { points, segments };
+    }
+
+    const pathInfos    = wirePaths.map((wp, pi) => { const d = wp.getAttribute('d'); const { points, segments } = parsePath(d); return { pi, d, points, segments, nonOrtho: segments.filter(s => !s.ortho) }; });
+    const totalSegs    = pathInfos.reduce((s, p) => s + p.segments.length, 0);
+    const totalNonOrtho = pathInfos.reduce((s, p) => s + p.nonOrtho.length, 0);
+
+    const lines = [
+      `Net:      ${netId}`,
+      `Pfade:    ${wirePaths.length}   Segmente gesamt: ${totalSegs}`,
+      ...netConns.map(c => `Verb.:    ${c.id}: ${c.from} -> ${c.to}`),
+      '',
+    ];
+    pathInfos.forEach(({ pi, d, points, segments, nonOrtho }) => {
+      lines.push(`-- Pfad [${pi}] ---------------------------`);
+      lines.push(`d: ${d}`);
+      lines.push(`Punkte (${points.length}):`);
+      points.forEach((p, i) => lines.push(`  [${i}] (${p.x.toFixed(1)}, ${p.y.toFixed(1)})`));
+      lines.push(`Segmente (${segments.length}):`);
+      segments.forEach((s, i) => lines.push(`  [${i}] dx=${s.dx.toFixed(1)} dy=${s.dy.toFixed(1)}${s.ortho ? '' : ' !! NICHT ORTHOGONAL'}`));
+      lines.push(nonOrtho.length ? `  !! ${nonOrtho.length} nicht-orthogonal` : `  OK alle orthogonal`);
+      lines.push('');
+    });
+    lines.push(totalNonOrtho ? `!! Gesamt: ${totalNonOrtho} nicht-orthogonale Segmente` : `OK Alle Segmente orthogonal`);
+    const info = lines.join('\n');
+
+    panel.dataset.copyText = info;
+    while (panel.firstChild) panel.removeChild(panel.firstChild);
+    const pre = document.createElement('div');
+    pre.style.cssText = 'white-space:pre;overflow-x:auto;max-width:400px;';
+    pre.textContent = info;
+    panel.appendChild(copyBtn);
+    panel.appendChild(pre);
+
+    panel.style.display = 'block';
+    panel.style.left = Math.min(e.clientX + 8, window.innerWidth  - 450) + 'px';
+    panel.style.top  = Math.min(e.clientY + 8, window.innerHeight - 420) + 'px';
+  });
+}
+</script>
+</body>
+</html>
