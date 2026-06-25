@@ -197,17 +197,6 @@ button.active { background: #5b2d8e; border-color: #7c3db0; color: #fff; }
 .ctrl-group label { white-space: nowrap; }
 
 input[type=range]  { width: 80px; accent-color: #7c3db0; }
-input[type=number] {
-    width: 52px;
-    background: #1e1e3a;
-    border: 1px solid #3a3a6a;
-    color: #ccc;
-    padding: 2px 5px;
-    border-radius: 3px;
-    font-size: 12px;
-    text-align: right;
-}
-
 #t-display {
     margin-left: auto;
     font-size: 12px;
