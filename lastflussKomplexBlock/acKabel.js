@@ -198,28 +198,58 @@ class ACKabel extends lastflussKomplexBlock {
                  P_dc, P_skin, P_prox, P_diel, Q_C, R_ac, X };
     }
 
+    calcCurrent(voltages) {
+        const u1 = toC(voltages.in  ?? { re: this.getParam('uNenn'), im: 0 });
+        const u2 = toC(voltages.out ?? { re: this.getParam('uNenn'), im: 0 });
+
+        const { R_ac, X, P_diel, Q_C } = this._kabelParams();
+        const sqrt3 = Math.sqrt(3);
+
+        // Serienimpedanz (Strang)
+        const z = { re: R_ac, im: X };
+        // Strangstrom: i = (u1 - u2) / (sqrt3 * z)
+        const i = cDiv(cSub(u1, u2), cScale(z, sqrt3));
+
+        // π-Modell Querstrom: kapazitive Einspeisung je Haelfte an in und out
+        // I_C = j * omega * C/2 * u  [Strangstrom]
+        // Q_C = omega*C*u_LL^2 → I_C_abs = Q_C / (sqrt3 * u_LL)
+        // Als komplexe Groesse: I_C = j * Q_C/(2 * sqrt3 * |u|)
+        // Vereinfacht: Querstrom aus gespeicherter Q_C
+        const u1abs = Math.max(1, Math.sqrt(u1.re**2 + u1.im**2));
+        const u2abs = Math.max(1, Math.sqrt(u2.re**2 + u2.im**2));
+        // kapazitiver Querstrom je Haelfte (imaginaer, positiv = kapazitiv = Einspeisung)
+        const iC1 = { re: 0, im:  Q_C / 2 / (sqrt3 * u1abs) };
+        const iC2 = { re: 0, im:  Q_C / 2 / (sqrt3 * u2abs) };
+        // dielektrischer Verlustwirkstrom je Haelfte (reell, negativ = Entnahme)
+        const iD1 = { re: -P_diel / 2 / (sqrt3 * u1abs), im: 0 };
+        const iD2 = { re: -P_diel / 2 / (sqrt3 * u2abs), im: 0 };
+
+        // Strom an Knoten in:  Kabel entnimmt Serienstrom, bekommt Querstrom
+        const iIn  = { re: -i.re + iC1.re + iD1.re, im: -i.im + iC1.im + iD1.im };
+        // Strom an Knoten out: Kabel speist Serienstrom ein, bekommt Querstrom
+        const iOut = { re:  i.re + iC2.re + iD2.re, im:  i.im + iC2.im + iD2.im };
+
+        return { in: iIn, out: iOut };
+    }
+
     calcPower(voltages) {
-        const { p1, p2 } = this._calc(voltages);
-        return { in: p1, out: p2 };   // p2 ist bereits korrigiert (π-Modell)
+        throw new Error('ACKabel.calcPower() ist nicht mehr unterstuetzt — calcCurrent() verwenden.');
     }
 
     applyOperatingPoint(voltages) {
         const { u1, u2, i, p1, p2, P_dc, P_skin, P_prox, P_diel, Q_C } = this._calc(voltages);
-
-        this._resultFormats = {
-            u1:     v => `U1: ${lastflussKomplexBlock.fmtPhasor(v)}`,
-            u2:     v => `U2: ${lastflussKomplexBlock.fmtPhasor(v)}`,
-            p1:     v => `S1: ${lastflussKomplexBlock.fmtPower({ re: -v.re, im: -v.im })}`,  // Eingang: Vorzeichen drehen → positiv = Leistungsfluss rein
-            p2:     v => `S2: ${lastflussKomplexBlock.fmtPower(v)}`,                          // Ausgang: positiv = Leistungsfluss raus
-            iAbs:   v => `I: ${v.toFixed(1)} A`,
-            P_dc:   v => `P_dc: ${(v/1000).toFixed(2)} kW`,
-            P_skin: v => `P_skin: ${(v/1000).toFixed(2)} kW`,
-            P_prox: v => `P_prox: ${(v/1000).toFixed(2)} kW`,
-            P_diel: v => `P_diel: ${(v/1000).toFixed(2)} kW`,
-            Q_C:    v => `Q_C: ${(v/1000).toFixed(2)} kVAr (kap.)`,
-        };
-        this._setResults({ u1, u2, p1, p2,
-            iAbs: cAbs(i), P_dc, P_skin, P_prox, P_diel, Q_C });
+        this.renderResults([
+            { key: 'u1',     text: `U1: ${lastflussKomplexBlock.fmtPhasor(u1)}` },
+            { key: 'u2',     text: `U2: ${lastflussKomplexBlock.fmtPhasor(u2)}` },
+            { key: 'p1',     text: `S1: ${lastflussKomplexBlock.fmtPower({ re: -p1.re, im: -p1.im })}` },
+            { key: 'p2',     text: `S2: ${lastflussKomplexBlock.fmtPower(p2)}` },
+            { key: 'iAbs',   text: `I: ${cAbs(i).toFixed(1)} A` },
+            { key: 'P_dc',   text: `P_dc: ${(P_dc/1000).toFixed(2)} kW` },
+            { key: 'P_skin', text: `P_skin: ${(P_skin/1000).toFixed(2)} kW` },
+            { key: 'P_prox', text: `P_prox: ${(P_prox/1000).toFixed(2)} kW` },
+            { key: 'P_diel', text: `P_diel: ${(P_diel/1000).toFixed(2)} kW` },
+            { key: 'Q_C',    text: `Q_C: ${(Q_C/1000).toFixed(2)} kVAr (kap.)` },
+        ]);
     }
 }
 
