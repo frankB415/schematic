@@ -25,10 +25,11 @@ Eingangsgrössen (vom Solver):
   vDc   — DC-Spannung an k_dc (reell)
 
 Gleichrichter-Kennlinie (Dreiphasen-Brücke B6):
-  vDc0  = |u1| · 1.35             Leerlauf-DC-Spannung
-  i_dc  = (vDc0 - vDc) / r_int    Strom aus linearer Kennlinie
-  r_int = u1Nenn · 1.35 / i_dcNenn  Innenwiderstand aus Nennpunkt
-  i_dcNenn = pNom / (u1Nenn · 1.35)
+  vDc0  = |u1| · 1.35                  Leerlauf-DC-Spannung
+  r_int = (1-eta) · vDc0Nenn² / pNom   Innenwiderstand (aus Wirkungsgrad)
+  i_dc  = max(0, (vDc0-vDc) / r_int)   Strom aus linearer Kennlinie
+  P_dc  = vDcPos · i_dc                 DC-Leistung (Verluste in r_int)
+  P_ac  = vDc0  · i_dc                 AC-Verbrauch (= P_dc + r_int·i_dc²)
 
 Strom AC-Seite (cos φ = 1, i1 in Phase mit u1):
   i1Abs = i_dc / √3               DC→AC Stromtransformation
@@ -36,7 +37,7 @@ Strom AC-Seite (cos φ = 1, i1 in Phase mit u1):
 
 Leistungen:
   S1    = √3 · u1 · i1*           AC-Scheinleistung (negativ = Verbrauch)
-  P_dc  = max(0, -S1.re) · eta    DC-Wirkleistung (positiv = Einspeisung)
+  P_dc  = vDcPos · i_dc            DC-Wirkleistung (positiv = Einspeisung)
 
 Diodenbedingung:
   i_dc = max(0, ...)   kein Rückstrom
@@ -101,31 +102,26 @@ class Gleichrichter extends lastflussKomplexBlock {
         const vDc0   = u1Abs * 1.35;              // Leerlauf-DC-Spannung
         const vDcPos = Math.max(0, vDc);           // DC-Spannung nicht negativ
 
-        // Innenwiderstand aus Nennpunkt:
-        //   i_dcNenn = pNom / (u1Nenn · 1.35)
-        //   r_int    = (u1Nenn · 1.35 - vDc_nenn) / i_dcNenn
-        //   Nennarbeitspunkt: vDc_nenn ≈ u1Nenn · 1.35 · 0.997  (0.3% Spannungsabfall)
-        //   Typisch für Leistungselektronik: uk_eff ≈ 0.3% (sehr steife Kennlinie)
-        //   → r_int = 0.003 · (u1Nenn·1.35)² / pNom
+        // Innenwiderstand: abgeleitet aus Wirkungsgrad
+        // r_int = (1-eta) · vDc0Nenn² / pNom
+        // → bei Nennlast: Spannungsabfall = (1-eta) · vDc0Nenn, Verluste = r_int · i_dcNenn²
         const vDc0Nenn = this.getParam('u1Nenn') * 1.35;
-        const r_int    = 0.003 * vDc0Nenn * vDc0Nenn / this.getParam('pNom');  // 0.3% Innenwiderstand
+        const eta      = this.getParam('eta');
+        const r_int    = (1 - eta) * vDc0Nenn * vDc0Nenn / this.getParam('pNom');
 
-        // DC-Strom aus linearer Gleichrichter-Kennlinie
-        //   i_dc = (vDc0 - vDcPos) / r_int   (Diodenbedingung: >= 0)
+        // DC-Strom und DC-Leistung
         const i_dc = Math.max(0, (vDc0 - vDcPos) / r_int);
+        const pDc  = vDcPos * i_dc;
 
-        // AC-Strangstrom: i1 in Phase mit u1 (cos φ = 1)
-        const i1Abs = i_dc / sqrt3;
+        // AC-Verbrauch = vDc0 · i_dc (Energiebilanz: P_dc + P_verl_R)
+        const pAcAbs = vDc0 * i_dc;
+        const s1     = { re: -pAcAbs, im: 0 };   // cos φ = 1
+
+        // AC-Strom: aus Leistungsbilanz rückgerechnet (für Anzeige)
+        // i1Abs = pAcAbs / (√3 · |u1|)
+        const i1Abs = u1Abs > 0 ? pAcAbs / (sqrt3 * u1Abs) : 0;
         const phi1  = cArg(u1);
         const i1    = { re: i1Abs * Math.cos(phi1), im: i1Abs * Math.sin(phi1) };
-
-        // AC-Scheinleistung: S1 = √3 · u1 · i1*  (negativ = Verbrauch)
-        const s1Raw  = cScale(cMul(u1, cConj(i1)), -sqrt3);
-
-        // Diodenbedingung: keine Rückspeisung
-        const pAcAbs = Math.max(0, -s1Raw.re);
-        const s1     = { re: -pAcAbs, im: s1Raw.im };
-        const pDc    = pAcAbs * this.getParam('eta');   // DC-Leistung
 
         return { u1, u1Abs, vDc, vDcPos, vDc0, i1, i_dc, s1, pDc };
     }
@@ -140,20 +136,15 @@ class Gleichrichter extends lastflussKomplexBlock {
 
     applyOperatingPoint(voltages) {
         const { u1, vDc, vDc0, i_dc, s1, pDc } = this._calc(voltages);
-
-        this._resultFormats = {
-            u1:   v => `U1: ${lastflussKomplexBlock.fmtPhasor(v)}`,
-            vDc:  v => `vDc: ${v.toFixed(1)} V`,
-            s1:   v => `S1: ${lastflussKomplexBlock.fmtPower({ re: -v.re, im: -v.im })}`,
-            pDc:  v => `P_dc: ${(v/1e3).toFixed(2)} kW`,
-            vDc0: v => `vDc0: ${v.toFixed(1)} V`,
-            iDc:  v => `I_dc: ${v.toFixed(1)} A`,
-            state: v => `Diode: ${v}`,
-        };
-        this._setResults({
-            u1, vDc, s1, pDc, vDc0, iDc: i_dc,
-            state: pDc <= 0 ? 'gesperrt' : 'leitend',
-        });
+        this.renderResults([
+            { key: 'u1',   text: `U1: ${lastflussKomplexBlock.fmtPhasor(u1)}` },
+            { key: 'vDc',  text: `vDc: ${vDc.toFixed(1)} V` },
+            { key: 's1',   text: `S1: ${lastflussKomplexBlock.fmtPower({ re: -s1.re, im: -s1.im })}` },
+            { key: 'pDc',  text: `P_dc: ${(pDc/1e3).toFixed(2)} kW` },
+            { key: 'vDc0', text: `vDc0: ${vDc0.toFixed(1)} V` },
+            { key: 'iDc',  text: `I_dc: ${i_dc.toFixed(1)} A` },
+            { key: 'state',text: `Diode: ${pDc <= 0 ? 'gesperrt' : 'leitend'}` },
+        ]);
     }
 }
 
