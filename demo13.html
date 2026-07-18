@@ -68,9 +68,9 @@ const quelle = new Spannungsquelle('Quelle', {
     x: 130, y: 60,
 });
 
-// 20kV-Kabel: 5 km, 150 mm²
+// 20kV-Kabel: 10 km, 150 mm²
 const kabel = new ACKabel('Kabel', {
-    laenge: 5, quer: 150, uNenn: 20000,
+    laenge: 10, quer: 150, uNenn: 20000,
     x: 130, y: 210,
 });
 
@@ -88,9 +88,9 @@ const pv = new SolarPanel('PV', {
     x: 570, y: 60,
 });
 
-// DC-Kabel: 1 km, 150 mm², 18 kV DC
+// DC-Kabel: 10 km, 150 mm², 18 kV DC
 const pvKabel = new DCKabel('PV-Kabel', {
-    laenge: 1, quer: 150, uNenn: 18000,
+    laenge: 10, quer: 150, uNenn: 18000,
     x: 570, y: 210,
 });
 
